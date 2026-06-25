@@ -51,11 +51,41 @@ def save_state(state: JobState) -> None:
     temporary.replace(destination)
 
 
+def _resolved_plan_warnings(plan: PlanRegion) -> list[str]:
+    warnings = list(plan.warnings)
+    if plan.scale_confirmed and plan.units_per_point:
+        resolved = {
+            "Manual crop and scale require confirmation.",
+            "No drawing scale detected. Calibrate manually.",
+            "Multiple drawing scales detected. Confirm the proposed scale or calibrate manually.",
+        }
+        warnings = [warning for warning in warnings if warning not in resolved]
+    if plan.confirmed:
+        warnings = [
+            warning
+            for warning in warnings
+            if warning != "Low-confidence crop: review and confirm before export."
+        ]
+    return warnings
+
+
 def load_state(job_id: str) -> JobState:
     path = state_path(job_id)
     if not path.is_file():
         raise FileNotFoundError(job_id)
-    return JobState.model_validate_json(path.read_text(encoding="utf-8"))
+    state = JobState.model_validate_json(path.read_text(encoding="utf-8"))
+    changed = False
+    for plan in state.plans:
+        if plan.scale_confirmed and plan.units_per_point and not plan.confirmed:
+            plan.confirmed = True
+            changed = True
+        warnings = _resolved_plan_warnings(plan)
+        if warnings != plan.warnings:
+            plan.warnings = warnings
+            changed = True
+    if changed:
+        save_state(state)
+    return state
 
 
 def create_job(filename: str, content: bytes) -> JobState:
@@ -123,6 +153,9 @@ def update_plan(state: JobState, plan_id: str, **changes) -> PlanRegion:
             if clipped.x1 - clipped.x0 >= 2 and clipped.y1 - clipped.y0 >= 2:
                 normalized_masks.append(clipped)
         updated.exclude_regions = normalized_masks
+        if updated.scale_confirmed and updated.units_per_point:
+            updated.confirmed = True
+        updated.warnings = _resolved_plan_warnings(updated)
         state.plans[index] = updated
         save_state(state)
         return updated
@@ -190,9 +223,13 @@ def _record_export_event(state: JobState, progress: int, message: str) -> None:
 def export_job(state: JobState, export_format: str = "all") -> Path:
     if export_format not in {"all", "svg", "cad"}:
         raise ValueError("Unsupported export format.")
-    selected = [plan for plan in state.plans if plan.confirmed]
+    selected = [
+        plan
+        for plan in state.plans
+        if plan.scale_confirmed and plan.units_per_point
+    ]
     if not selected:
-        raise ValueError("Confirm at least one plan before export.")
+        raise ValueError("Calibrate or select a scale for at least one plan before export.")
     incomplete = [plan.name for plan in selected if not plan.scale_confirmed or not plan.units_per_point]
     if incomplete:
         raise ValueError("Confirm the scale for: " + ", ".join(incomplete))

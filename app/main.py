@@ -185,11 +185,15 @@ def start_export(job_id: str, request: ExportRequest):
             "progress": state.export_progress,
             "step": state.export_step,
         }
-    selected = [plan for plan in state.plans if plan.confirmed]
+    selected = [
+        plan
+        for plan in state.plans
+        if plan.scale_confirmed and plan.units_per_point
+    ]
     if not selected:
         raise HTTPException(
             status_code=400,
-            detail="Confirm at least one plan before export.",
+            detail="Calibrate or select a scale for at least one plan before export.",
         )
     incomplete = [
         plan.name

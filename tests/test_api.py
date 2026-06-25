@@ -50,3 +50,19 @@ def test_rejects_non_pdf(tmp_path, monkeypatch):
         files={"file": ("fake.pdf", b"not a pdf", "application/pdf")},
     )
     assert response.status_code == 400
+
+
+def test_confirmed_scale_clears_stale_manual_review_warning(
+    vector_pdf, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(jobs, "JOBS_ROOT", tmp_path / "jobs")
+    state = jobs.create_job("sample.pdf", vector_pdf.read_bytes())
+    plan = jobs.add_plan(state, 0, state.plans[0].crop, "Manual Plan")
+    updated = jobs.update_plan(
+        state,
+        plan.id,
+        units_per_point=1,
+        scale_confirmed=True,
+    )
+    assert updated.confirmed is True
+    assert updated.warnings == []

@@ -417,7 +417,7 @@ canvas.addEventListener("pointerup", async (event) => {
   }
   state.dragging = null;
   try {
-    await savePlan({ crop: selectedPlan().crop, confirmed: false });
+    await savePlan({ crop: selectedPlan().crop });
   } catch (error) {
     toast(error.message, true);
     await refreshJob();
@@ -513,7 +513,7 @@ function renderInspector() {
 }
 
 function renderExportState() {
-  const ready = state.job.plans.filter((plan) => plan.confirmed && plan.scale_confirmed && plan.units_per_point);
+  const ready = state.job.plans.filter((plan) => plan.scale_confirmed && plan.units_per_point);
   $("#exportCount").textContent = `${ready.length} ${ready.length === 1 ? "plan" : "plans"} ready`;
   $("#exportButton").disabled = ready.length === 0;
 }
