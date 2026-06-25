@@ -11,6 +11,7 @@ import pymupdf
 
 from .converter import (
     build_drawing_model,
+    convert_svg_to_blend,
     convert_dxf_to_dwg,
     make_comparison,
     report_for_model,
@@ -221,7 +222,7 @@ def _record_export_event(state: JobState, progress: int, message: str) -> None:
 
 
 def export_job(state: JobState, export_format: str = "all") -> Path:
-    if export_format not in {"all", "svg", "cad"}:
+    if export_format not in {"all", "svg", "cad", "blend"}:
         raise ValueError("Unsupported export format.")
     selected = [
         plan
@@ -246,7 +247,11 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
     shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(parents=True)
     reports: list[dict] = []
-    export_warnings = list(state.warnings)
+    export_warnings = [
+        warning
+        for warning in state.warnings
+        if "ODA File Converter" not in warning and "Blender" not in warning
+    ]
     try:
         for index, plan in enumerate(selected, 1):
             plan_start = 5 + round((index - 1) * 78 / len(selected))
@@ -258,7 +263,8 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
             )
             stem = f"{index:02d}-{_safe_stem(plan.name)}"
             dxf_path = output_dir / f"{stem}.dxf" if export_format in {"all", "cad"} else None
-            svg_path = output_dir / f"{stem}.svg" if export_format in {"all", "svg"} else None
+            svg_path = output_dir / f"{stem}.svg" if export_format in {"all", "svg", "blend"} else None
+            blend_path = output_dir / f"{stem}.blend" if export_format == "blend" else None
             vector_progress = plan_start + max(1, round((plan_end - plan_start) * 0.55))
 
             def conversion_event(message: str) -> None:
@@ -309,6 +315,8 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
                 )
             report = report_for_model(model, dxf_path, svg_path, dxf_counts)
             report["plan_id"] = plan.id
+            report["blend"] = None
+            report["blend_mesh"] = None
             source_preview = output_dir / f"{stem}-source.png"
             cad_preview = output_dir / f"{stem}-cad.png"
             comparison = output_dir / f"{stem}-comparison.png"
@@ -318,6 +326,29 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
                 f"{plan.name}: rendering PDF crop",
             )
             render_source_crop(pdf_path(state.id), plan, source_preview)
+            if blend_path and svg_path:
+                _record_export_event(
+                    state,
+                    plan_start + round((plan_end - plan_start) * 0.7),
+                    f"{plan.name}: importing SVG into Blender as Grease Pencil",
+                )
+                converted, blend_warning, blend_stats = convert_svg_to_blend(
+                    svg_path,
+                    source_preview,
+                    blend_path,
+                    model,
+                )
+                if converted:
+                    report["blend"] = converted.name
+                    report["blend_mesh"] = blend_stats
+                    _record_export_event(
+                        state,
+                        plan_start + round((plan_end - plan_start) * 0.8),
+                        f"{plan.name}: Blender edge mesh written",
+                    )
+                if blend_warning:
+                    report["warnings"].append(blend_warning)
+                    export_warnings.append(f"{plan.name}: {blend_warning}")
             if dxf_path:
                 try:
                     _record_export_event(
@@ -325,11 +356,9 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
                         plan_start + round((plan_end - plan_start) * 0.76),
                         f"{plan.name}: rendering CAD preview",
                     )
-                    page_rotation = state.pages[plan.page_index].rotation
                     render_dxf(
                         dxf_path,
                         cad_preview,
-                        preview_rotation=(-page_rotation) % 360,
                     )
                     make_comparison(source_preview, cad_preview, comparison)
                 except Exception as exc:
@@ -354,7 +383,7 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
                 if dwg_warning:
                     report["warnings"].append(dwg_warning)
                     export_warnings.append(f"{plan.name}: {dwg_warning}")
-            else:
+            elif export_format == "svg":
                 _record_export_event(
                     state,
                     plan_start + round((plan_end - plan_start) * 0.82),

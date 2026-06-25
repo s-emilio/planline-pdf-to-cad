@@ -54,11 +54,14 @@ async function checkHealth() {
     const health = await api("/api/health");
     const pill = $("#odaStatus");
     const ocr = health.ocr_available ? " · OCR" : "";
+    const blender = health.blender_available ? " · Blender" : "";
+    const blendOption = $("#exportFormat")?.querySelector('option[value="blend"]');
+    if (blendOption) blendOption.disabled = !health.blender_available;
     if (health.oda_available) {
-      pill.textContent = `SVG · DXF · DWG${ocr} ready`;
+      pill.textContent = `SVG · DXF · DWG${ocr}${blender} ready`;
       pill.className = "status-pill ready";
     } else {
-      pill.textContent = `SVG · DXF${ocr} ready · ODA not found`;
+      pill.textContent = `SVG · DXF${ocr}${blender} ready · ODA not found`;
       pill.className = "status-pill warn";
     }
   } catch (_) {

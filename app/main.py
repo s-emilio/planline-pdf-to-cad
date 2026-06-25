@@ -44,15 +44,18 @@ def _state(job_id: str):
 
 @app.get("/api/health")
 def health() -> dict:
-    from .converter import find_oda_converter
+    from .converter import find_blender, find_oda_converter
     from .ocr import tesseract_available
 
     converter = find_oda_converter()
+    blender = find_blender()
     return {
         "ok": True,
         "oda_available": converter is not None,
         "oda_path": str(converter) if converter else None,
         "ocr_available": tesseract_available(),
+        "blender_available": blender is not None,
+        "blender_path": str(blender) if blender else None,
     }
 
 

@@ -10,11 +10,13 @@ The app:
 - reads scale labels from native PDF text or optional local OCR;
 - exports lines, polylines, curves, fills, and text to editable SVG and DXF R2018;
 - optionally converts DXF to DWG 2018 through ODA File Converter;
+- optionally builds a physically scaled Blender edge mesh with a packed source plane;
 - creates one drawing per calibrated plan plus JSON/HTML reports and previews.
 
-Choose **SVG + CAD**, **SVG only**, or **CAD only** at export time. SVG and DXF
-are written from the same normalized drawing model, so they share the confirmed
-crop, rotation, scale, units, and layer organization.
+Choose **SVG + CAD**, **SVG only**, **CAD only**, or **SVG + Blender edge mesh**
+at export time. SVG and DXF are written from the same normalized drawing model,
+so they share the confirmed crop, rotation, scale, units, filters, masks, and
+layer organization.
 
 It does **not** trace scanned drawings or infer intelligent wall, door, or BIM
 objects.
@@ -78,6 +80,41 @@ environment variable.
 If ODA is unavailable or conversion fails, the export still includes the DXF
 and a warning in the report.
 
+## Blender support
+
+Install [Blender](https://www.blender.org/download/) to enable
+**SVG + Blender edge mesh**. Planline checks:
+
+1. the `BLENDER_EXECUTABLE` environment variable;
+2. `blender` on the command path;
+3. `/Applications/Blender.app/Contents/MacOS/Blender`;
+4. versioned Blender applications in `/Applications`.
+
+The status indicator includes **Blender ready** when a usable installation is
+found. Each Blender export contains:
+
+- the physically scaled source SVG;
+- a `.blend` file containing one flat `Plan_Edges` mesh;
+- edges only, with mesh faces removed;
+- a `PDF_Source_Plane` sized to the full calibrated crop;
+- the rendered source PNG packed into the Blender file;
+- the source plane 2 mm beneath the edge mesh to prevent z-fighting;
+- a visible 180-degree X-axis rotation on the source plane;
+- an automatically calculated translation that aligns the full crop with
+  Blender's SVG linework center.
+
+The scene uses meters and stores the source units, verified plan dimensions,
+alignment offsets, Blender version, vertex count, edge count, and face count as
+metadata in the conversion report. This makes the result a practical tracing
+base for reconstructing walls and other architecture in 3D.
+
+If Blender is unavailable, the Blender option is disabled in the interface.
+Set an explicit executable when needed:
+
+```bash
+BLENDER_EXECUTABLE="/path/to/blender" .venv/bin/python -m pdf_plan_to_dwg
+```
+
 ## Scale
 
 Planline checks native PDF text first and falls back to local OCR when
@@ -133,7 +170,9 @@ title blocks, legends, notes, adjacent plans, or other regions that should not
 be exported. Masks are saved per plan and can be removed individually.
 Linework crossing a mask is trimmed at its boundary rather than discarding the
 entire line. Masked text and fills are omitted, and curves crossing a mask are
-flattened into clipped editable line segments.
+flattened into clipped editable line segments. Mask coordinates are translated
+through the PDF page rotation before clipping, so masks follow the visible
+sheet even when the source PDF uses a rotated page box.
 
 ## Limitations
 
@@ -146,6 +185,8 @@ flattened into clipped editable line segments.
   or outlined plan annotations into CAD text.
 - Raster-only sheets are rejected rather than silently producing an empty CAD
   file.
+- Blender conversion requires a local Blender installation with Grease Pencil
+  SVG import support.
 
 ## Privacy
 

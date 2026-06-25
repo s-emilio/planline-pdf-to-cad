@@ -79,7 +79,7 @@ class JobState(BaseModel):
     export_progress: int = Field(default=0, ge=0, le=100)
     export_step: str | None = None
     export_events: list[str] = Field(default_factory=list)
-    export_format: Literal["all", "svg", "cad"] = "all"
+    export_format: Literal["all", "svg", "cad", "blend"] = "all"
 
 
 class PlanUpdate(BaseModel):
@@ -116,4 +116,4 @@ class CalibrationRequest(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    format: Literal["all", "svg", "cad"] = "all"
+    format: Literal["all", "svg", "cad", "blend"] = "all"

@@ -339,6 +339,21 @@ def _text_color(color: int) -> str:
     return f"#{color & 0xFFFFFF:06X}"
 
 
+def unrotated_page_rect(page: pymupdf.Page, rect: RectModel) -> RectModel:
+    transformed = pymupdf.Rect(
+        rect.x0,
+        rect.y0,
+        rect.x1,
+        rect.y1,
+    ) * page.derotation_matrix
+    return RectModel(
+        x0=min(transformed.x0, transformed.x1),
+        y0=min(transformed.y0, transformed.y1),
+        x1=max(transformed.x0, transformed.x1),
+        y1=max(transformed.y0, transformed.y1),
+    )
+
+
 def build_drawing_model(
     pdf_path: Path,
     plan: PlanRegion,
@@ -346,31 +361,41 @@ def build_drawing_model(
 ) -> DrawingModel:
     if not plan.units_per_point or plan.units_per_point <= 0:
         raise ValueError(f"{plan.name}: a confirmed scale is required.")
-    crop = plan.crop.normalized()
-    transform = CadTransform(crop, plan.units_per_point, plan.rotation)
-    tolerance = max(plan.units_per_point * 0.02, 1e-6)
-    model = DrawingModel(
-        name=plan.name,
-        source_page=plan.page_index + 1,
-        crop=crop,
-        rotation=plan.rotation,
-        units=plan.units,
-        units_per_point=plan.units_per_point,
-        scale_label=plan.scale_label,
-        confidence=plan.confidence,
-        width=transform.width,
-        height=transform.height,
-        remove_text=plan.remove_text,
-        orthogonal_only=plan.orthogonal_only,
-        angle_tolerance=plan.angle_tolerance,
-        exclude_regions=list(plan.exclude_regions),
-        warnings=list(plan.warnings),
-    )
-    segments_by_style: dict[tuple[str, StrokeStyle], list[tuple[Point, Point]]] = defaultdict(list)
-
     document = pymupdf.open(pdf_path)
     try:
         page = document[plan.page_index]
+        page_rotation = page.rotation
+        display_crop = plan.crop.normalized()
+        crop = unrotated_page_rect(page, display_crop)
+        exclusions = [
+            unrotated_page_rect(page, rect.normalized())
+            for rect in plan.exclude_regions
+        ]
+        page.set_rotation(0)
+        effective_rotation = (plan.rotation - page_rotation) % 360
+        transform = CadTransform(crop, plan.units_per_point, effective_rotation)
+        tolerance = max(plan.units_per_point * 0.02, 1e-6)
+        model = DrawingModel(
+            name=plan.name,
+            source_page=plan.page_index + 1,
+            crop=display_crop,
+            rotation=plan.rotation,
+            units=plan.units,
+            units_per_point=plan.units_per_point,
+            scale_label=plan.scale_label,
+            confidence=plan.confidence,
+            width=transform.width,
+            height=transform.height,
+            remove_text=plan.remove_text,
+            orthogonal_only=plan.orthogonal_only,
+            angle_tolerance=plan.angle_tolerance,
+            exclude_regions=list(plan.exclude_regions),
+            warnings=list(plan.warnings),
+        )
+        segments_by_style: dict[
+            tuple[str, StrokeStyle],
+            list[tuple[Point, Point]],
+        ] = defaultdict(list)
         text_regions: list[RectModel] = []
         if plan.remove_text:
             if tesseract_available():
@@ -422,9 +447,9 @@ def build_drawing_model(
                     start,
                     end,
                     crop,
-                    plan.exclude_regions,
+                    exclusions,
                 )
-                if plan.exclude_regions and clipped_segments != original_clipped:
+                if exclusions and clipped_segments != original_clipped:
                     model.unsupported["filtered_exclusion_segments"] += 1
                 for clipped_start, clipped_end in clipped_segments:
                     transformed_start = transform.point(clipped_start)
@@ -443,8 +468,8 @@ def build_drawing_model(
                 if plan.orthogonal_only:
                     model.unsupported["filtered_curves"] += 1
                     continue
-                if plan.exclude_regions and (
-                    any(_point_in_any(point, plan.exclude_regions) for point in control_points)
+                if exclusions and (
+                    any(_point_in_any(point, exclusions) for point in control_points)
                     or _rect_touches_any(
                         pymupdf.Rect(
                             min(point[0] for point in control_points),
@@ -452,7 +477,7 @@ def build_drawing_model(
                             max(point[0] for point in control_points),
                             max(point[1] for point in control_points),
                         ),
-                        plan.exclude_regions,
+                        exclusions,
                     )
                 ):
                     flattened = flatten_cubic(control_points)
@@ -461,7 +486,7 @@ def build_drawing_model(
                             start,
                             end,
                             crop,
-                            plan.exclude_regions,
+                            exclusions,
                         ):
                             segments_by_style[(layer, style)].append(
                                 (
@@ -504,7 +529,7 @@ def build_drawing_model(
                         and all(_inside(point, crop) for point in ring)
                         and not _rect_touches_any(
                             ring_rect,
-                            plan.exclude_regions,
+                            exclusions,
                         )
                     ):
                         model.polygons.append(
@@ -515,7 +540,7 @@ def build_drawing_model(
                                 opacity=_number_or(path.get("fill_opacity"), 1),
                             )
                         )
-                    elif _rect_touches_any(ring_rect, plan.exclude_regions):
+                    elif _rect_touches_any(ring_rect, exclusions):
                         model.unsupported["filtered_exclusion_fills"] += 1
 
         for (layer, style), segments in segments_by_style.items():
@@ -544,7 +569,7 @@ def build_drawing_model(
                             continue
                         span_bbox = span.get("bbox")
                         if span_bbox and _rect_touches_any(
-                            pymupdf.Rect(span_bbox), plan.exclude_regions
+                            pymupdf.Rect(span_bbox), exclusions
                         ):
                             model.unsupported["filtered_exclusion_text"] += 1
                             continue

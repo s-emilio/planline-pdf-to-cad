@@ -19,9 +19,9 @@ from ezdxf.addons.drawing import Frontend, RenderContext, layout
 from ezdxf.addons.drawing.config import BackgroundPolicy, ColorPolicy, Configuration
 from ezdxf.addons.drawing.pymupdf import PyMuPdfBackend
 from ezdxf.colors import rgb2int
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
-from .drawing_model import DrawingModel, build_drawing_model
+from .drawing_model import DrawingModel, build_drawing_model, unrotated_page_rect
 from .models import PlanRegion
 
 
@@ -309,6 +309,100 @@ def find_oda_converter() -> Path | None:
     return None
 
 
+def find_blender() -> Path | None:
+    override = os.environ.get("BLENDER_EXECUTABLE")
+    candidates = [
+        override,
+        shutil.which("blender"),
+        "/Applications/Blender.app/Contents/MacOS/Blender",
+    ]
+    candidates.extend(
+        str(path)
+        for path in sorted(
+            Path("/Applications").glob("Blender *.app/Contents/MacOS/Blender"),
+            reverse=True,
+        )
+    )
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+    return None
+
+
+def convert_svg_to_blend(
+    svg_path: Path,
+    source_png: Path,
+    output_path: Path,
+    model: DrawingModel,
+) -> tuple[Path | None, str | None, dict[str, Any] | None]:
+    blender = find_blender()
+    if blender is None:
+        return (
+            None,
+            "Blender is not installed; the physically scaled SVG was preserved.",
+            None,
+        )
+    script = Path(__file__).with_name("blender_import.py")
+    width_m = model.width * (0.0254 if model.units == "in" else 0.001)
+    height_m = model.height * (0.0254 if model.units == "in" else 0.001)
+    points = [
+        point
+        for entity in (*model.polylines, *model.curves, *model.polygons)
+        for point in entity.points
+    ]
+    points.extend(text.insert for text in model.texts)
+    if points:
+        content_center_x = (
+            min(point[0] for point in points) + max(point[0] for point in points)
+        ) / 2
+        content_center_y = (
+            min(point[1] for point in points) + max(point[1] for point in points)
+        ) / 2
+    else:
+        content_center_x = model.width / 2
+        content_center_y = model.height / 2
+    meters_per_unit = 0.0254 if model.units == "in" else 0.001
+    plane_offset_x_m = (model.width / 2 - content_center_x) * meters_per_unit
+    plane_offset_y_m = (model.height / 2 - content_center_y) * meters_per_unit
+    command = [
+        str(blender),
+        "--background",
+        "--factory-startup",
+        "--python",
+        str(script),
+        "--",
+        str(svg_path),
+        str(source_png),
+        str(output_path),
+        str(width_m),
+        str(height_m),
+        str(plane_offset_x_m),
+        str(plane_offset_y_m),
+        model.name,
+        model.units,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"Blender conversion could not run: {exc}", None
+    marker = "PLANLINE_BLEND_STATS:"
+    stats = None
+    for line in result.stdout.splitlines():
+        if line.startswith(marker):
+            stats = json.loads(line[len(marker) :])
+    if result.returncode != 0 or not output_path.is_file() or stats is None:
+        detail = (result.stderr or result.stdout or "unknown Blender error").strip()
+        return None, f"Blender conversion failed: {detail[-1000:]}", None
+    stats["blender_executable"] = str(blender)
+    return output_path, None, stats
+
+
 def convert_dxf_to_dwg(dxf_path: Path, output_dir: Path) -> tuple[Path | None, str | None]:
     converter = find_oda_converter()
     if converter is None:
@@ -354,15 +448,18 @@ def render_source_crop(pdf_path: Path, plan: PlanRegion, output_path: Path) -> N
     document = pymupdf.open(pdf_path)
     try:
         page = document[plan.page_index]
-        crop = plan.crop.normalized()
+        page_rotation = page.rotation
+        crop = unrotated_page_rect(page, plan.crop.normalized())
+        page.set_rotation(0)
         pixmap = page.get_pixmap(
             matrix=pymupdf.Matrix(2, 2),
             clip=pymupdf.Rect(crop.x0, crop.y0, crop.x1, crop.y1),
             alpha=False,
         )
         pixmap.save(output_path)
-        if plan.rotation:
-            _rotate_preview(output_path, plan.rotation)
+        preview_rotation = (plan.rotation - page_rotation) % 360
+        if preview_rotation:
+            _rotate_preview(output_path, preview_rotation)
     finally:
         document.close()
 
@@ -417,19 +514,34 @@ def make_comparison(source_path: Path, cad_path: Path, output_path: Path) -> Non
             return image.resize((max(1, round(image.width * ratio)), target_height))
 
         source_scaled, cad_scaled = resized(source), resized(cad)
-        header = 54
-        gutter = 8
+        margin = 20
+        header = 76
+        label_font = ImageFont.load_default(size=22)
+        source_panel_width = source_scaled.width + (margin * 2)
+        cad_panel_width = cad_scaled.width + (margin * 2)
         canvas = Image.new(
             "RGB",
-            (source_scaled.width + cad_scaled.width + gutter, target_height + header),
+            (
+                source_panel_width + cad_panel_width,
+                target_height + header + (margin * 2),
+            ),
             "white",
         )
-        canvas.paste(source_scaled, (0, header))
-        canvas.paste(cad_scaled, (source_scaled.width + gutter, header))
+        source_x = margin
+        cad_x = source_panel_width + margin
+        image_y = header + margin
+        canvas.paste(source_scaled, (source_x, image_y))
+        canvas.paste(cad_scaled, (cad_x, image_y))
         draw = ImageDraw.Draw(canvas)
         draw.rectangle((0, 0, canvas.width, header), fill="#102019")
-        draw.text((18, 18), "PDF SOURCE", fill="white")
-        draw.text((source_scaled.width + gutter + 18, 18), "CAD OUTPUT", fill="white")
+        label_y = (header - 22) // 2
+        draw.text((margin, label_y), "PDF SOURCE", fill="white", font=label_font)
+        draw.text(
+            (source_panel_width + margin, label_y),
+            "CAD OUTPUT",
+            fill="white",
+            font=label_font,
+        )
         canvas.save(output_path, "PNG")
 
 
@@ -443,7 +555,7 @@ def write_reports(output_dir: Path, job_name: str, reports: list[dict], warnings
         counts = ", ".join(f"{key}: {value}" for key, value in report["entity_counts"].items())
         files = ", ".join(
             value
-            for key in ("svg", "dxf", "dwg")
+            for key in ("svg", "dxf", "dwg", "blend")
             if (value := report.get(key))
         )
         plan_warnings = "<br>".join(html.escape(item) for item in report["warnings"]) or "None"

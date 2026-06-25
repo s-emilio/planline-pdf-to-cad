@@ -5,12 +5,14 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 import ezdxf
+import pymupdf
 import pytest
 from PIL import Image
 
 from pdf_plan_to_dwg.app import jobs
 from pdf_plan_to_dwg.app.converter import (
     convert_plan_to_dxf,
+    make_comparison,
     render_dxf,
     render_source_crop,
     write_dxf,
@@ -146,6 +148,27 @@ def test_comparison_previews_apply_quarter_turn_rotations(vector_pdf, tmp_path):
         assert cad.height > cad.width
 
 
+def test_comparison_has_twenty_pixel_image_margins(tmp_path):
+    source_path = tmp_path / "source.png"
+    cad_path = tmp_path / "cad.png"
+    output_path = tmp_path / "comparison.png"
+    Image.new("RGB", (100, 500), "red").save(source_path)
+    Image.new("RGB", (200, 500), "blue").save(cad_path)
+
+    make_comparison(source_path, cad_path, output_path)
+
+    with Image.open(output_path) as comparison:
+        assert comparison.size == (380, 616)
+        assert comparison.getpixel((19, 96)) == (255, 255, 255)
+        assert comparison.getpixel((20, 96)) == (255, 0, 0)
+        assert comparison.getpixel((119, 595)) == (255, 0, 0)
+        assert comparison.getpixel((120, 595)) == (255, 255, 255)
+        assert comparison.getpixel((159, 96)) == (255, 255, 255)
+        assert comparison.getpixel((160, 96)) == (0, 0, 255)
+        assert comparison.getpixel((359, 595)) == (0, 0, 255)
+        assert comparison.getpixel((360, 595)) == (255, 255, 255)
+
+
 def test_exclusion_mask_trims_exported_geometry(vector_pdf):
     plan = confirmed_plan()
     plan.exclude_regions = [
@@ -169,6 +192,46 @@ def test_exclusion_mask_trims_exported_geometry(vector_pdf):
         for start, end in zip(polyline.points, polyline.points[1:]):
             midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
             assert not (x0 < midpoint[0] < x1 and y0 < midpoint[1] < y1)
+
+
+def test_exclusion_mask_uses_visible_coordinates_on_rotated_page(tmp_path):
+    pdf_path = tmp_path / "rotated-plan.pdf"
+    document = pymupdf.open()
+    page = document.new_page(width=100, height=200)
+    page.draw_line((10, 100), (90, 100), width=1)
+    page.set_rotation(270)
+    document.save(pdf_path)
+    document.close()
+
+    plan = PlanRegion(
+        id="rotated-plan",
+        page_index=0,
+        name="Rotated plan",
+        crop=RectModel(x0=0, y0=0, x1=200, y1=100),
+        confidence=1,
+        confirmed=True,
+        scale_confirmed=True,
+        units="in",
+        units_per_point=1,
+        scale_label="1:1",
+        exclude_regions=[RectModel(x0=90, y0=40, x1=110, y1=60)],
+    )
+    model = build_drawing_model(pdf_path, plan)
+
+    assert model.width == pytest.approx(200)
+    assert model.height == pytest.approx(100)
+    vertical_segments = [
+        (start, end)
+        for polyline in model.polylines
+        for start, end in zip(polyline.points, polyline.points[1:])
+        if start[0] == pytest.approx(100) and end[0] == pytest.approx(100)
+    ]
+    assert len(vertical_segments) == 2
+    y_ranges = sorted(
+        (min(start[1], end[1]), max(start[1], end[1]))
+        for start, end in vertical_segments
+    )
+    assert y_ranges == pytest.approx([(10, 40), (60, 90)])
 
 
 def test_full_job_export_keeps_dxf_when_oda_is_missing(vector_pdf, tmp_path, monkeypatch):
@@ -216,6 +279,58 @@ def test_svg_only_export_omits_cad_files(vector_pdf, tmp_path, monkeypatch):
         report = json.loads(bundle.read("conversion-report.json"))
         assert report["plans"][0]["svg"].endswith(".svg")
         assert report["plans"][0]["dxf"] is None
+
+
+def test_blend_export_packages_scaled_edge_mesh_metadata(
+    vector_pdf, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(jobs, "JOBS_ROOT", tmp_path / "jobs")
+
+    def fake_blender(svg_path, source_png, output_path, model):
+        assert source_png.is_file()
+        output_path.write_bytes(b"BLENDER")
+        return output_path, None, {
+            "blender_version": "test",
+            "object": "Plan_Edges",
+            "vertices": 20,
+            "edges": 16,
+            "faces": 0,
+            "width_m": model.width * 0.0254,
+            "height_m": model.height * 0.0254,
+            "x_rotation_applied_degrees": 180,
+            "source_plane": "PDF_Source_Plane",
+            "source_plane_faces": 1,
+            "source_image_packed": True,
+            "source_plane_alignment_x_m": 0.1,
+            "source_plane_alignment_y_m": 0,
+            "source_plane_rotation_x_degrees": 180,
+        }
+
+    monkeypatch.setattr(jobs, "convert_svg_to_blend", fake_blender)
+    state = jobs.create_job("sample.pdf", vector_pdf.read_bytes())
+    plan = state.plans[0]
+    plan.crop = RectModel(x0=68, y0=68, x1=572, y1=490)
+    plan.confirmed = True
+    plan.scale_confirmed = True
+    state.plans[0] = plan
+    jobs.save_state(state)
+
+    archive = jobs.export_job(state, "blend")
+
+    with zipfile.ZipFile(archive) as bundle:
+        names = bundle.namelist()
+        assert any(name.endswith(".svg") for name in names)
+        assert any(name.endswith(".blend") for name in names)
+        assert not any(name.endswith(".dxf") for name in names)
+        report = json.loads(bundle.read("conversion-report.json"))
+        plan_report = report["plans"][0]
+        assert plan_report["blend"].endswith(".blend")
+        assert plan_report["blend_mesh"]["object"] == "Plan_Edges"
+        assert plan_report["blend_mesh"]["faces"] == 0
+        assert plan_report["blend_mesh"]["x_rotation_applied_degrees"] == 180
+        assert plan_report["blend_mesh"]["source_plane"] == "PDF_Source_Plane"
+        assert plan_report["blend_mesh"]["source_image_packed"] is True
+        assert plan_report["blend_mesh"]["source_plane_rotation_x_degrees"] == 180
 
 
 def test_changing_units_preserves_physical_scale(vector_pdf, tmp_path, monkeypatch):
