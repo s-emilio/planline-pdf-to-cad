@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import io
 import json
 import os
 import re
@@ -360,11 +361,29 @@ def render_source_crop(pdf_path: Path, plan: PlanRegion, output_path: Path) -> N
             alpha=False,
         )
         pixmap.save(output_path)
+        if plan.rotation:
+            _rotate_preview(output_path, plan.rotation)
     finally:
         document.close()
 
 
-def render_dxf(dxf_path: Path, output_path: Path) -> None:
+def _rotate_preview(output_path: Path, rotation: int) -> None:
+    transpose = {
+        90: Image.Transpose.ROTATE_90,
+        180: Image.Transpose.ROTATE_180,
+        270: Image.Transpose.ROTATE_270,
+    }.get(rotation % 360)
+    if transpose is None:
+        return
+    with Image.open(output_path) as image:
+        image.transpose(transpose).save(output_path, "PNG")
+
+
+def render_dxf(
+    dxf_path: Path,
+    output_path: Path,
+    preview_rotation: int = 0,
+) -> None:
     document = ezdxf.readfile(dxf_path)
     backend = PyMuPdfBackend()
     context = RenderContext(document)
@@ -376,7 +395,17 @@ def render_dxf(dxf_path: Path, output_path: Path) -> None:
         document.modelspace(), finalize=True
     )
     page = layout.Page(0, 0, max_width=300, max_height=300)
-    output_path.write_bytes(backend.get_pixmap_bytes(page, dpi=144, alpha=False))
+    image_bytes = backend.get_pixmap_bytes(page, dpi=144, alpha=False)
+    if preview_rotation % 360:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            transpose = {
+                90: Image.Transpose.ROTATE_90,
+                180: Image.Transpose.ROTATE_180,
+                270: Image.Transpose.ROTATE_270,
+            }[preview_rotation % 360]
+            image.transpose(transpose).save(output_path, "PNG")
+    else:
+        output_path.write_bytes(image_bytes)
 
 
 def make_comparison(source_path: Path, cad_path: Path, output_path: Path) -> None:

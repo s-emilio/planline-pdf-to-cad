@@ -6,9 +6,16 @@ import xml.etree.ElementTree as ET
 
 import ezdxf
 import pytest
+from PIL import Image
 
 from pdf_plan_to_dwg.app import jobs
-from pdf_plan_to_dwg.app.converter import convert_plan_to_dxf, write_svg
+from pdf_plan_to_dwg.app.converter import (
+    convert_plan_to_dxf,
+    render_dxf,
+    render_source_crop,
+    write_dxf,
+    write_svg,
+)
 from pdf_plan_to_dwg.app.drawing_model import (
     _is_orthogonal_segment,
     build_drawing_model,
@@ -120,6 +127,23 @@ def test_filter_settings_are_written_to_svg_metadata(vector_pdf, tmp_path):
         "angle_tolerance_degrees": 5,
         "exclude_regions": [],
     }
+
+
+def test_comparison_previews_apply_quarter_turn_rotations(vector_pdf, tmp_path):
+    plan = confirmed_plan()
+    plan.rotation = 90
+    source_path = tmp_path / "source.png"
+    render_source_crop(vector_pdf, plan, source_path)
+    with Image.open(source_path) as source:
+        assert source.height > source.width
+
+    model = build_drawing_model(vector_pdf, confirmed_plan())
+    dxf_path = tmp_path / "plan.dxf"
+    write_dxf(model, dxf_path)
+    cad_path = tmp_path / "cad.png"
+    render_dxf(dxf_path, cad_path, preview_rotation=90)
+    with Image.open(cad_path) as cad:
+        assert cad.height > cad.width
 
 
 def test_exclusion_mask_trims_exported_geometry(vector_pdf):

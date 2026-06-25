@@ -325,7 +325,12 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
                         plan_start + round((plan_end - plan_start) * 0.76),
                         f"{plan.name}: rendering CAD preview",
                     )
-                    render_dxf(dxf_path, cad_preview)
+                    page_rotation = state.pages[plan.page_index].rotation
+                    render_dxf(
+                        dxf_path,
+                        cad_preview,
+                        preview_rotation=(-page_rotation) % 360,
+                    )
                     make_comparison(source_preview, cad_preview, comparison)
                 except Exception as exc:
                     preview_warning = (
