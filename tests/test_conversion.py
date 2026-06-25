@@ -55,6 +55,22 @@ def test_exports_editable_svg_from_shared_model(vector_pdf, tmp_path):
     assert "units_per_pdf_point" in root.find("svg:metadata", namespace).text
 
 
+def test_shared_model_accepts_null_optional_pdf_style_values(vector_pdf, monkeypatch):
+    import pymupdf
+
+    original = pymupdf.Page.get_drawings
+
+    def drawings_with_null_styles(page, extended=False):
+        drawings = original(page, extended=extended)
+        drawings[0]["width"] = None
+        drawings[0]["stroke_opacity"] = None
+        return drawings
+
+    monkeypatch.setattr(pymupdf.Page, "get_drawings", drawings_with_null_styles)
+    model = build_drawing_model(vector_pdf, confirmed_plan())
+    assert model.polylines
+
+
 def test_full_job_export_keeps_dxf_when_oda_is_missing(vector_pdf, tmp_path, monkeypatch):
     monkeypatch.setattr(jobs, "JOBS_ROOT", tmp_path / "jobs")
     state = jobs.create_job("sample.pdf", vector_pdf.read_bytes())

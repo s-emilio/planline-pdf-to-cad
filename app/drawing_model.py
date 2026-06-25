@@ -25,6 +25,15 @@ Point = tuple[float, float]
 ProgressCallback = Callable[[str], None]
 
 
+def _number_or(value: Any, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class StrokeStyle:
     color: str = "#000000"
@@ -131,7 +140,7 @@ def _layer_for_path(path: dict, fill: bool = False) -> str:
         return source_layer
     if fill:
         return safe_layer_name(f"PDF-FILL-{color_hex(path.get('fill'))}")
-    width = round(float(path.get("width", 0)), 2)
+    width = round(_number_or(path.get("width"), 0), 2)
     return safe_layer_name(f"PDF-LINE-{color_hex(path.get('color'))}-W{width:g}")
 
 
@@ -219,8 +228,8 @@ def _stroke_style(path: dict, scale: float) -> StrokeStyle:
     cap = caps[0] if isinstance(caps, (tuple, list)) else caps
     return StrokeStyle(
         color=_color(path.get("color")),
-        width=max(float(path.get("width") or 0) * scale, scale * 0.01),
-        opacity=float(path.get("stroke_opacity", 1) or 1),
+        width=max(_number_or(path.get("width"), 0) * scale, scale * 0.01),
+        opacity=_number_or(path.get("stroke_opacity"), 1),
         dasharray=_dasharray(path.get("dashes", ""), scale),
         linecap=line_caps.get(int(cap or 0), "butt"),
         linejoin=line_joins.get(int(path.get("lineJoin", 0) or 0), "miter"),
@@ -315,7 +324,7 @@ def build_drawing_model(
                                 layer=fill_layer,
                                 points=[transform.point(point) for point in ring],
                                 fill=_color(path.get("fill")),
-                                opacity=float(path.get("fill_opacity", 1) or 1),
+                                opacity=_number_or(path.get("fill_opacity"), 1),
                             )
                         )
 
@@ -346,12 +355,12 @@ def build_drawing_model(
                             text=value,
                             insert=transform.point(tuple(origin)),
                             height=max(
-                                float(span.get("size", 1)) * plan.units_per_point,
+                                _number_or(span.get("size"), 1) * plan.units_per_point,
                                 tolerance,
                             ),
                             rotation=rotation,
                             color=_text_color(int(span.get("color", 0))),
-                            opacity=float(span.get("alpha", 255)) / 255,
+                            opacity=_number_or(span.get("alpha"), 255) / 255,
                             font_family=span.get("font", "sans-serif"),
                         )
                     )
