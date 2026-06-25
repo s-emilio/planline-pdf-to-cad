@@ -409,6 +409,10 @@ function renderInspector() {
   $("#scaleSource").textContent = selectedCandidate
     ? `${selectedCandidate.source} · ${Math.round(selectedCandidate.confidence * 100)}% confidence`
     : "";
+  $("#removeText").checked = Boolean(plan.remove_text);
+  $("#orthogonalOnly").checked = Boolean(plan.orthogonal_only);
+  $("#angleTolerance").value = String(plan.angle_tolerance || 3);
+  $("#angleTolerance").disabled = !plan.orthogonal_only;
   $("#confirmScaleButton").textContent = plan.scale_confirmed ? "Scale confirmed ✓" : "Confirm scale";
   $("#confirmScaleButton").disabled = !plan.units_per_point;
   $("#planWarnings").innerHTML = plan.warnings
@@ -618,6 +622,27 @@ $("#scaleCandidate").addEventListener("change", async (event) => {
       confirmed: false,
     });
     toast("Detected scale selected. Confirm it to save the plan.");
+  } catch (error) { toast(error.message, true); }
+});
+
+$("#removeText").addEventListener("change", async (event) => {
+  try {
+    await savePlan({ remove_text: event.target.checked });
+    toast(event.target.checked ? "Text cleanup enabled." : "Text cleanup disabled.");
+  } catch (error) { toast(error.message, true); }
+});
+
+$("#orthogonalOnly").addEventListener("change", async (event) => {
+  try {
+    await savePlan({ orthogonal_only: event.target.checked });
+    toast(event.target.checked ? "Orthogonal line filter enabled." : "All line angles restored.");
+  } catch (error) { toast(error.message, true); }
+});
+
+$("#angleTolerance").addEventListener("change", async (event) => {
+  try {
+    await savePlan({ angle_tolerance: Number(event.target.value) });
+    toast(`Angle tolerance set to ±${event.target.value}°.`);
   } catch (error) { toast(error.message, true); }
 });
 

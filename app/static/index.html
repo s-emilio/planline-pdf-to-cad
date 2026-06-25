@@ -124,6 +124,28 @@
             <select id="scaleCandidate"></select>
           </label>
 
+          <details class="cleanup">
+            <summary>Blender cleanup filters</summary>
+            <p>Reduce annotation clutter before importing the exported linework into Blender.</p>
+            <label class="check-row">
+              <input id="removeText" type="checkbox">
+              <span>Remove text and outlined words (best effort)</span>
+            </label>
+            <label class="check-row">
+              <input id="orthogonalOnly" type="checkbox">
+              <span>Keep horizontal and vertical linework only</span>
+            </label>
+            <label id="angleToleranceRow">Angle tolerance
+              <select id="angleTolerance">
+                <option value="1">±1° — strict</option>
+                <option value="3">±3° — recommended</option>
+                <option value="5">±5° — forgiving</option>
+                <option value="10">±10° — loose</option>
+              </select>
+            </label>
+            <small>Orthogonal mode removes diagonal lines, curves, and filled hatches. It can also remove legitimate angled walls, stairs, and door swings.</small>
+          </details>
+
           <details class="calibration">
             <summary>Two-point calibration</summary>
             <p>Click two points with a known distance on the plan preview.</p>

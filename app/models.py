@@ -46,6 +46,9 @@ class PlanRegion(BaseModel):
     units: Literal["in", "mm"] = "in"
     units_per_point: float | None = None
     scale_label: str | None = None
+    remove_text: bool = False
+    orthogonal_only: bool = False
+    angle_tolerance: float = Field(default=3.0, ge=0, le=15)
     detection_notes: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
@@ -87,6 +90,9 @@ class PlanUpdate(BaseModel):
     scale_label: str | None = None
     confirmed: bool | None = None
     scale_confirmed: bool | None = None
+    remove_text: bool | None = None
+    orthogonal_only: bool | None = None
+    angle_tolerance: float | None = Field(default=None, ge=0, le=15)
 
 
 class PlanCreate(BaseModel):

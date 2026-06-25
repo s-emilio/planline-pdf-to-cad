@@ -19,6 +19,7 @@ from .geometry import (
     safe_layer_name,
 )
 from .models import PlanRegion, RectModel
+from .ocr import ocr_lines, tesseract_available
 
 
 Point = tuple[float, float]
@@ -90,6 +91,9 @@ class DrawingModel:
     confidence: float
     width: float
     height: float
+    remove_text: bool = False
+    orthogonal_only: bool = False
+    angle_tolerance: float = 3.0
     polylines: list[Polyline] = field(default_factory=list)
     curves: list[CubicBezier] = field(default_factory=list)
     polygons: list[Polygon] = field(default_factory=list)
@@ -132,6 +136,75 @@ def _rect_touches_crop(rect: pymupdf.Rect, crop: RectModel) -> bool:
         or rect.y1 < crop.y0
         or rect.y0 > crop.y1
     )
+
+
+def _expanded_rect(rect: RectModel, amount: float, bounds: RectModel) -> RectModel:
+    return RectModel(
+        x0=max(bounds.x0, rect.x0 - amount),
+        y0=max(bounds.y0, rect.y0 - amount),
+        x1=min(bounds.x1, rect.x1 + amount),
+        y1=min(bounds.y1, rect.y1 + amount),
+    )
+
+
+def _rect_is_text_geometry(
+    rect: pymupdf.Rect,
+    text_regions: list[RectModel],
+    item_count: int,
+) -> bool:
+    if rect.width <= 0 or rect.height <= 0:
+        return False
+    center_x = (rect.x0 + rect.x1) / 2
+    center_y = (rect.y0 + rect.y1) / 2
+    for region in text_regions:
+        if not (
+            region.x0 <= center_x <= region.x1
+            and region.y0 <= center_y <= region.y1
+        ):
+            continue
+        if rect.width <= max(region.x1 - region.x0, 1) * 1.2 and rect.height <= max(
+            region.y1 - region.y0, 1
+        ) * 1.8:
+            return True
+    short_side = min(rect.width, rect.height)
+    long_side = max(rect.width, rect.height)
+    if 0.4 <= short_side <= 14 and long_side <= 220 and item_count >= 12:
+        return True
+    return False
+
+
+def _segment_is_text_geometry(
+    start: Point,
+    end: Point,
+    text_regions: list[RectModel],
+) -> bool:
+    center_x = (start[0] + end[0]) / 2
+    center_y = (start[1] + end[1]) / 2
+    length = math.dist(start, end)
+    for region in text_regions:
+        if not (
+            region.x0 <= center_x <= region.x1
+            and region.y0 <= center_y <= region.y1
+        ):
+            continue
+        region_size = max(region.x1 - region.x0, region.y1 - region.y0, 1)
+        if length <= region_size * 1.5:
+            return True
+    return False
+
+
+def _is_orthogonal_segment(
+    start: Point,
+    end: Point,
+    tolerance_degrees: float,
+) -> bool:
+    dx = abs(end[0] - start[0])
+    dy = abs(end[1] - start[1])
+    if dx <= 1e-9 and dy <= 1e-9:
+        return False
+    angle = math.degrees(math.atan2(dy, dx)) % 90
+    distance = min(angle, 90 - angle)
+    return distance <= tolerance_degrees
 
 
 def _layer_for_path(path: dict, fill: bool = False) -> str:
@@ -269,6 +342,9 @@ def build_drawing_model(
         confidence=plan.confidence,
         width=transform.width,
         height=transform.height,
+        remove_text=plan.remove_text,
+        orthogonal_only=plan.orthogonal_only,
+        angle_tolerance=plan.angle_tolerance,
         warnings=list(plan.warnings),
     )
     segments_by_style: dict[tuple[str, StrokeStyle], list[tuple[Point, Point]]] = defaultdict(list)
@@ -276,6 +352,24 @@ def build_drawing_model(
     document = pymupdf.open(pdf_path)
     try:
         page = document[plan.page_index]
+        text_regions: list[RectModel] = []
+        if plan.remove_text:
+            if tesseract_available():
+                if progress:
+                    progress("Finding native and outlined text for removal")
+                text_regions = [
+                    _expanded_rect(line.rect, 1.5, crop)
+                    for line in ocr_lines(
+                        page,
+                        pymupdf.Rect(crop.x0, crop.y0, crop.x1, crop.y1),
+                        scale=2.5,
+                    )
+                    if line.confidence >= 0.35
+                ]
+            else:
+                model.warnings.append(
+                    "Tesseract OCR was unavailable; outlined-word removal used geometric heuristics and may miss more labels."
+                )
         drawings = page.get_drawings(extended=True)
         if progress:
             progress(f"Reading {len(drawings):,} PDF drawing records")
@@ -284,18 +378,43 @@ def build_drawing_model(
                 progress(f"Building drawing model {index:,}/{len(drawings):,}")
             if path.get("rect") is None or path.get("type") in {"clip", "group"}:
                 continue
-            if not _rect_touches_crop(pymupdf.Rect(path["rect"]), crop):
+            path_rect = pymupdf.Rect(path["rect"])
+            if not _rect_touches_crop(path_rect, crop):
+                continue
+            if plan.remove_text and _rect_is_text_geometry(
+                path_rect,
+                text_regions,
+                len(path.get("items", [])),
+            ):
+                model.unsupported["filtered_text_outlines"] += 1
                 continue
             layer = _layer_for_path(path)
             style = _stroke_style(path, plan.units_per_point)
             segments, curves, rings, unsupported = _path_parts(path)
             model.unsupported["path_items"] += unsupported
             for start, end in segments:
+                if plan.remove_text and _segment_is_text_geometry(
+                    start, end, text_regions
+                ):
+                    model.unsupported["filtered_text_segments"] += 1
+                    continue
                 for clipped_start, clipped_end in clip_segment(start, end, crop):
+                    transformed_start = transform.point(clipped_start)
+                    transformed_end = transform.point(clipped_end)
+                    if plan.orthogonal_only and not _is_orthogonal_segment(
+                        transformed_start,
+                        transformed_end,
+                        plan.angle_tolerance,
+                    ):
+                        model.unsupported["filtered_non_orthogonal_segments"] += 1
+                        continue
                     segments_by_style[(layer, style)].append(
-                        (transform.point(clipped_start), transform.point(clipped_end))
+                        (transformed_start, transformed_end)
                     )
             for control_points in curves:
+                if plan.orthogonal_only:
+                    model.unsupported["filtered_curves"] += 1
+                    continue
                 if all(_inside(point, crop) for point in control_points):
                     transformed = tuple(transform.point(point) for point in control_points)
                     if any(
@@ -315,7 +434,7 @@ def build_drawing_model(
                     model.warnings.append(
                         "One or more clipped curves were flattened to linework."
                     )
-            if path.get("fill") is not None:
+            if path.get("fill") is not None and not plan.orthogonal_only:
                 fill_layer = _layer_for_path(path, fill=True)
                 for ring in rings:
                     if len(ring) >= 3 and all(_inside(point, crop) for point in ring):
@@ -335,40 +454,52 @@ def build_drawing_model(
             ):
                 model.polylines.append(Polyline(layer, chain, style))
 
-        text_dict = page.get_text(
-            "dict",
-            clip=pymupdf.Rect(crop.x0, crop.y0, crop.x1, crop.y1),
-        )
-        for block in text_dict.get("blocks", []):
-            if block.get("type") != 0:
-                continue
-            for line in block.get("lines", []):
-                rotation = _text_rotation(transform, tuple(line.get("dir", (1.0, 0.0))))
-                for span in line.get("spans", []):
-                    value = span.get("text", "").strip()
-                    origin = span.get("origin")
-                    if not value or not origin or not _inside(tuple(origin), crop, 1):
-                        continue
-                    model.texts.append(
-                        DrawingText(
-                            layer="PDF-TEXT",
-                            text=value,
-                            insert=transform.point(tuple(origin)),
-                            height=max(
-                                _number_or(span.get("size"), 1) * plan.units_per_point,
-                                tolerance,
-                            ),
-                            rotation=rotation,
-                            color=_text_color(int(span.get("color", 0))),
-                            opacity=_number_or(span.get("alpha"), 255) / 255,
-                            font_family=span.get("font", "sans-serif"),
-                        )
+        if not plan.remove_text:
+            text_dict = page.get_text(
+                "dict",
+                clip=pymupdf.Rect(crop.x0, crop.y0, crop.x1, crop.y1),
+            )
+            for block in text_dict.get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    rotation = _text_rotation(
+                        transform, tuple(line.get("dir", (1.0, 0.0)))
                     )
+                    for span in line.get("spans", []):
+                        value = span.get("text", "").strip()
+                        origin = span.get("origin")
+                        if not value or not origin or not _inside(tuple(origin), crop, 1):
+                            continue
+                        model.texts.append(
+                            DrawingText(
+                                layer="PDF-TEXT",
+                                text=value,
+                                insert=transform.point(tuple(origin)),
+                                height=max(
+                                    _number_or(span.get("size"), 1)
+                                    * plan.units_per_point,
+                                    tolerance,
+                                ),
+                                rotation=rotation,
+                                color=_text_color(int(span.get("color", 0))),
+                                opacity=_number_or(span.get("alpha"), 255) / 255,
+                                font_family=span.get("font", "sans-serif"),
+                            )
+                        )
     finally:
         document.close()
-    if sum(model.unsupported.values()):
+    if model.unsupported["path_items"]:
         model.warnings.append(
-            f"Unsupported PDF path items: {sum(model.unsupported.values())}."
+            f"Unsupported PDF path items: {model.unsupported['path_items']}."
+        )
+    if plan.remove_text:
+        model.warnings.append(
+            "Text cleanup removed native text and OCR-matched outlined lettering."
+        )
+    if plan.orthogonal_only:
+        model.warnings.append(
+            f"Orthogonal cleanup kept linework within ±{plan.angle_tolerance:g}° of horizontal or vertical and removed curves and fills."
         )
     model.warnings = sorted(set(model.warnings))
     return model

@@ -9,7 +9,10 @@ import pytest
 
 from pdf_plan_to_dwg.app import jobs
 from pdf_plan_to_dwg.app.converter import convert_plan_to_dxf, write_svg
-from pdf_plan_to_dwg.app.drawing_model import build_drawing_model
+from pdf_plan_to_dwg.app.drawing_model import (
+    _is_orthogonal_segment,
+    build_drawing_model,
+)
 from pdf_plan_to_dwg.app.models import PlanRegion, RectModel
 
 
@@ -69,6 +72,52 @@ def test_shared_model_accepts_null_optional_pdf_style_values(vector_pdf, monkeyp
     monkeypatch.setattr(pymupdf.Page, "get_drawings", drawings_with_null_styles)
     model = build_drawing_model(vector_pdf, confirmed_plan())
     assert model.polylines
+
+
+def test_blender_cleanup_removes_text_curves_fills_and_diagonal_lines(vector_pdf):
+    plan = confirmed_plan()
+    unfiltered = build_drawing_model(vector_pdf, plan)
+    plan.remove_text = True
+    plan.orthogonal_only = True
+    plan.angle_tolerance = 1
+    filtered = build_drawing_model(vector_pdf, plan)
+
+    assert unfiltered.texts
+    assert unfiltered.curves
+    assert unfiltered.polygons
+    assert filtered.texts == []
+    assert filtered.curves == []
+    assert filtered.polygons == []
+    assert filtered.unsupported["filtered_curves"] > 0
+    for polyline in filtered.polylines:
+        for start, end in zip(polyline.points, polyline.points[1:]):
+            dx = abs(end[0] - start[0])
+            dy = abs(end[1] - start[1])
+            assert dx == pytest.approx(0, abs=1e-6) or dy == pytest.approx(0, abs=1e-6)
+
+
+def test_angle_filter_keeps_near_orthogonal_segments_only():
+    assert _is_orthogonal_segment((0, 0), (100, 1), 1)
+    assert _is_orthogonal_segment((0, 0), (1, 100), 1)
+    assert not _is_orthogonal_segment((0, 0), (100, 100), 5)
+
+
+def test_filter_settings_are_written_to_svg_metadata(vector_pdf, tmp_path):
+    plan = confirmed_plan()
+    plan.remove_text = True
+    plan.orthogonal_only = True
+    plan.angle_tolerance = 5
+    model = build_drawing_model(vector_pdf, plan)
+    path = tmp_path / "filtered.svg"
+    write_svg(model, path)
+    root = ET.parse(path).getroot()
+    namespace = {"svg": "http://www.w3.org/2000/svg"}
+    metadata = json.loads(root.find("svg:metadata", namespace).text)
+    assert metadata["filters"] == {
+        "remove_text": True,
+        "orthogonal_only": True,
+        "angle_tolerance_degrees": 5,
+    }
 
 
 def test_full_job_export_keeps_dxf_when_oda_is_missing(vector_pdf, tmp_path, monkeypatch):

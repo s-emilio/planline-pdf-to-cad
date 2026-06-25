@@ -98,6 +98,23 @@ is always a proposal rather than an unquestioned measurement.
 All CAD model-space output is 1:1, in inches for imperial plans and millimeters
 for metric plans.
 
+## Blender cleanup filters
+
+Each plan can optionally remove text and restrict exported geometry to
+horizontal and vertical linework:
+
+- **Remove text and outlined words** omits native PDF text and combines local
+  Tesseract OCR regions with compact-vector heuristics to mask lettering that
+  was converted to outlines. This is best-effort because outlined words are
+  ordinary geometry inside the PDF.
+- **Keep horizontal and vertical linework only** keeps segments within the
+  selected angle tolerance of 0 or 90 degrees. It also removes curves and
+  filled hatches, producing simpler linework for Blender reconstruction.
+
+These are intentionally aggressive export filters. Orthogonal mode can remove
+real angled walls, stairs, ramps, door swings, and other useful geometry, so
+leave it disabled for irregular plans or make a second unfiltered export.
+
 ## Limitations
 
 - PDF line types and fonts are approximated when no direct CAD equivalent

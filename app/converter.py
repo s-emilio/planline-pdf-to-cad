@@ -142,6 +142,11 @@ def write_svg(model: DrawingModel, output_path: Path) -> None:
         "units": model.units,
         "units_per_pdf_point": model.units_per_point,
         "scale_label": model.scale_label,
+        "filters": {
+            "remove_text": model.remove_text,
+            "orthogonal_only": model.orthogonal_only,
+            "angle_tolerance_degrees": model.angle_tolerance,
+        },
     }
     ET.SubElement(root, f"{{{namespace}}}metadata").text = json.dumps(metadata)
     entities_by_layer: dict[str, list[tuple[str, Any]]] = defaultdict(list)
@@ -226,6 +231,16 @@ def report_for_model(
     svg_path: Path | None,
     dxf_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    filtered_counts = {
+        key: value
+        for key, value in model.unsupported.items()
+        if key.startswith("filtered_")
+    }
+    unsupported = {
+        key: value
+        for key, value in model.unsupported.items()
+        if not key.startswith("filtered_")
+    }
     return {
         "plan_id": None,
         "name": model.name,
@@ -235,12 +250,18 @@ def report_for_model(
         "units": model.units,
         "units_per_pdf_point": model.units_per_point,
         "scale_label": model.scale_label,
+        "filters": {
+            "remove_text": model.remove_text,
+            "orthogonal_only": model.orthogonal_only,
+            "angle_tolerance_degrees": model.angle_tolerance,
+        },
         "confidence": model.confidence,
         "drawing_extents": {"width": model.width, "height": model.height},
         "entity_counts": dxf_counts or model.entity_counts,
         "shared_model_counts": model.entity_counts,
         "layer_counts": model.layer_counts,
-        "unsupported": dict(model.unsupported),
+        "filtered_geometry": filtered_counts,
+        "unsupported": unsupported,
         "warnings": model.warnings,
         "dxf": dxf_path.name if dxf_path else None,
         "svg": svg_path.name if svg_path else None,

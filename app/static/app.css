@@ -144,9 +144,12 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .primary-button:hover { background: var(--green-dark); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 .full { width: 100%; }
-.calibration { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 11px 0; }
-.calibration summary { cursor: pointer; font-size: 12px; font-weight: 750; }
-.calibration p { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.calibration, .cleanup { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 11px 0; }
+.calibration summary, .cleanup summary { cursor: pointer; font-size: 12px; font-weight: 750; }
+.calibration p, .cleanup p, .cleanup > small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.cleanup { display: grid; gap: 10px; }
+.cleanup summary { margin-bottom: 2px; }
+.cleanup .check-row { color: var(--ink); }
 .calibration-row { display: grid; grid-template-columns: 1.2fr .8fr; gap: 7px; margin: 8px 0; }
 .warnings { display: grid; gap: 6px; }
 .warning-item { font-size: 11px; color: var(--warning); background: #fff6e7; border-left: 3px solid #d18a31; padding: 8px 9px; line-height: 1.4; }

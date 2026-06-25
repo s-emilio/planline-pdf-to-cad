@@ -77,7 +77,12 @@ def parse_tesseract_tsv(
     return lines
 
 
-def _ocr_clip(page: pymupdf.Page, clip: pymupdf.Rect, scale: float) -> list[OcrLine]:
+def ocr_lines(
+    page: pymupdf.Page,
+    clip: pymupdf.Rect,
+    *,
+    scale: float = 3.0,
+) -> list[OcrLine]:
     binary = shutil.which("tesseract")
     if not binary:
         return []
@@ -114,7 +119,7 @@ def ocr_scale_candidates(page: pymupdf.Page) -> list[ScaleCandidate]:
     ]
     lines: list[OcrLine] = []
     for region in regions:
-        lines.extend(_ocr_clip(page, region, scale=3.5))
+        lines.extend(ocr_lines(page, region, scale=3.5))
 
     candidates: list[ScaleCandidate] = []
     seen: set[tuple[str, int, int]] = set()
