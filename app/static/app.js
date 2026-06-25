@@ -17,6 +17,7 @@ const state = {
   calibrationMode: false,
   maskMode: false,
   maskDraft: null,
+  workflowPlanId: null,
   panMode: false,
   spaceDown: false,
 };
@@ -508,8 +509,30 @@ function renderInspector() {
   `).join("");
   $("#confirmScaleButton").textContent = plan.scale_confirmed ? "Scale confirmed ✓" : "Confirm scale";
   $("#confirmScaleButton").disabled = !plan.units_per_point;
+  const measurementsComplete = Boolean(plan.scale_confirmed && plan.units_per_point);
+  $("#measurementStep").classList.toggle("complete", measurementsComplete);
+  $("#cleanupStep").classList.toggle("locked", !measurementsComplete);
+  $("#measurementStatus").textContent = measurementsComplete
+    ? `${plan.scale_label || "Calibrated"} · ${plan.units}`
+    : "Set drawing scale";
+  const activeCleanup = Number(plan.remove_text) + Number(plan.orthogonal_only) + masks.length;
+  $("#cleanupStatus").textContent = measurementsComplete
+    ? (activeCleanup ? `${activeCleanup} active setting${activeCleanup === 1 ? "" : "s"}` : "Optional export cleanup")
+    : "Complete measurements first";
+  if (state.workflowPlanId !== plan.id) {
+    state.workflowPlanId = plan.id;
+    $("#measurementStep").open = !measurementsComplete;
+    $("#cleanupStep").open = measurementsComplete;
+  }
   $("#planWarnings").innerHTML = plan.warnings
     .map((warning) => `<div class="warning-item">${escapeHtml(warning)}</div>`).join("");
+}
+
+function advanceToCleanup() {
+  $("#measurementStep").open = false;
+  $("#cleanupStep").classList.remove("locked");
+  $("#cleanupStep").open = true;
+  $("#cleanupStep").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function renderExportState() {
@@ -606,6 +629,7 @@ function selectPlan(planId) {
   state.calibrationMode = false;
   state.maskMode = false;
   state.maskDraft = null;
+  state.workflowPlanId = null;
   renderInspector();
   drawCanvas();
 }
@@ -702,6 +726,7 @@ $("#planForm").addEventListener("submit", (event) => event.preventDefault());
 $("#confirmScaleButton").addEventListener("click", async () => {
   try {
     await savePlan({ scale_confirmed: true, confirmed: true });
+    advanceToCleanup();
     toast("Scale confirmed and plan saved.");
   } catch (error) { toast(error.message, true); }
 });
@@ -718,8 +743,16 @@ $("#scaleCandidate").addEventListener("change", async (event) => {
       scale_confirmed: true,
       confirmed: true,
     });
+    advanceToCleanup();
     toast("Detected scale selected and plan saved.");
   } catch (error) { toast(error.message, true); }
+});
+
+$("#cleanupStep").addEventListener("click", (event) => {
+  if (!$("#cleanupStep").classList.contains("locked")) return;
+  event.preventDefault();
+  $("#measurementStep").open = true;
+  toast("Complete measurements before opening cleanup.", true);
 });
 
 $("#removeText").addEventListener("change", async (event) => {
@@ -826,6 +859,7 @@ $("#applyCalibrationButton").addEventListener("click", async () => {
     state.job.plans[index] = updated;
     state.calibration = [];
     renderInspector(); renderExportState(); drawCanvas();
+    advanceToCleanup();
     toast("Calibration applied and plan saved.");
   } catch (error) { toast(error.message, true); }
 });

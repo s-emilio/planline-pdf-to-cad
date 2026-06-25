@@ -94,81 +94,98 @@
             <input id="planName" type="text">
           </label>
 
-          <div class="two-columns">
-            <label>Rotation
-              <select id="rotation">
-                <option value="0">0°</option>
-                <option value="90">90°</option>
-                <option value="180">180°</option>
-                <option value="270">270°</option>
-              </select>
-            </label>
-            <label>CAD units
-              <select id="units">
-                <option value="in">Inches</option>
-                <option value="mm">Millimeters</option>
-              </select>
-            </label>
-          </div>
+          <details id="measurementStep" class="workflow-step" open>
+            <summary>
+              <span class="step-number">1</span>
+              <span><strong>Measurements</strong><small id="measurementStatus">Set drawing scale</small></span>
+              <span id="measurementCheck" class="step-check">✓</span>
+            </summary>
+            <div class="step-content">
+              <div class="two-columns">
+                <label>Rotation
+                  <select id="rotation">
+                    <option value="0">0°</option>
+                    <option value="90">90°</option>
+                    <option value="180">180°</option>
+                    <option value="270">270°</option>
+                  </select>
+                </label>
+                <label>CAD units
+                  <select id="units">
+                    <option value="in">Inches</option>
+                    <option value="mm">Millimeters</option>
+                  </select>
+                </label>
+              </div>
 
-          <div class="scale-card">
-            <div>
-              <span class="field-label">Drawing scale</span>
-              <strong id="scaleLabel">Not detected</strong>
-              <small id="scaleValue">Calibration required</small>
-              <small id="scaleSource"></small>
+              <div class="scale-card">
+                <div>
+                  <span class="field-label">Drawing scale</span>
+                  <strong id="scaleLabel">Not detected</strong>
+                  <small id="scaleValue">Calibration required</small>
+                  <small id="scaleSource"></small>
+                </div>
+                <button id="confirmScaleButton" type="button" class="small-button">Confirm scale</button>
+              </div>
+              <label id="scaleCandidateRow" class="hidden">Detected scale options
+                <select id="scaleCandidate"></select>
+              </label>
+
+              <div class="calibration">
+                <strong>Two-point calibration</strong>
+                <p>Click two points with a known distance on the plan preview.</p>
+                <button id="pickPointsButton" type="button" class="secondary-button full">Pick two points</button>
+                <div class="calibration-row">
+                  <input id="knownDistance" type="number" min="0" step="any" placeholder="Distance">
+                  <select id="knownUnits">
+                    <option value="ft">feet</option>
+                    <option value="in">inches</option>
+                    <option value="mm">mm</option>
+                    <option value="cm">cm</option>
+                    <option value="m">meters</option>
+                  </select>
+                </div>
+                <button id="applyCalibrationButton" type="button" class="small-button full" disabled>Apply calibration</button>
+              </div>
             </div>
-            <button id="confirmScaleButton" type="button" class="small-button">Confirm scale</button>
-          </div>
-          <label id="scaleCandidateRow" class="hidden">Detected scale options
-            <select id="scaleCandidate"></select>
-          </label>
-
-          <details class="cleanup">
-            <summary>Blender cleanup filters</summary>
-            <p>Reduce annotation clutter before importing the exported linework into Blender.</p>
-            <label class="check-row">
-              <input id="removeText" type="checkbox">
-              <span>Remove text and outlined words (best effort)</span>
-            </label>
-            <label class="check-row">
-              <input id="orthogonalOnly" type="checkbox">
-              <span>Keep horizontal and vertical linework only</span>
-            </label>
-            <label id="angleToleranceRow">Angle tolerance
-              <select id="angleTolerance">
-                <option value="1">±1° — strict</option>
-                <option value="3">±3° — recommended</option>
-                <option value="5">±5° — forgiving</option>
-                <option value="10">±10° — loose</option>
-              </select>
-            </label>
-            <small>Orthogonal mode removes diagonal lines, curves, and filled hatches. It can also remove legitimate angled walls, stairs, and door swings.</small>
           </details>
 
-          <details class="exclusions">
-            <summary>Exclusion masks <span id="maskCount">0 masks</span></summary>
-            <p>Draw rectangles over title blocks, legends, notes, or neighboring plans. Geometry inside them will not be exported.</p>
-            <button id="drawMaskButton" type="button" class="secondary-button full">Draw exclusion mask</button>
-            <div id="maskList" class="mask-list"></div>
-            <button id="clearMasksButton" type="button" class="text-button danger">Remove all masks</button>
-          </details>
+          <details id="cleanupStep" class="workflow-step locked">
+            <summary>
+              <span class="step-number">2</span>
+              <span><strong>Cleanup & masks</strong><small id="cleanupStatus">Complete measurements first</small></span>
+            </summary>
+            <div class="step-content">
+              <section class="cleanup">
+                <strong>Blender cleanup filters</strong>
+                <p>Reduce annotation clutter before importing the exported linework into Blender.</p>
+                <label class="check-row">
+                  <input id="removeText" type="checkbox">
+                  <span>Remove text and outlined words (best effort)</span>
+                </label>
+                <label class="check-row">
+                  <input id="orthogonalOnly" type="checkbox">
+                  <span>Keep horizontal and vertical linework only</span>
+                </label>
+                <label id="angleToleranceRow">Angle tolerance
+                  <select id="angleTolerance">
+                    <option value="1">±1° — strict</option>
+                    <option value="3">±3° — recommended</option>
+                    <option value="5">±5° — forgiving</option>
+                    <option value="10">±10° — loose</option>
+                  </select>
+                </label>
+                <small>Orthogonal mode removes diagonal lines, curves, and filled hatches. It can also remove legitimate angled walls, stairs, and door swings.</small>
+              </section>
 
-          <details class="calibration">
-            <summary>Two-point calibration</summary>
-            <p>Click two points with a known distance on the plan preview.</p>
-            <button id="pickPointsButton" type="button" class="secondary-button full">Pick two points</button>
-            <div class="calibration-row">
-              <input id="knownDistance" type="number" min="0" step="any" placeholder="Distance">
-              <select id="knownUnits">
-                <option value="ft">feet</option>
-                <option value="in">inches</option>
-                <option value="mm">mm</option>
-                <option value="cm">cm</option>
-                <option value="m">meters</option>
-              </select>
+              <section class="exclusions">
+                <div class="section-heading"><strong>Exclusion masks</strong><span id="maskCount">0 masks</span></div>
+                <p>Draw rectangles over title blocks, legends, notes, or neighboring plans. Geometry inside them will not be exported.</p>
+                <button id="drawMaskButton" type="button" class="secondary-button full">Draw exclusion mask</button>
+                <div id="maskList" class="mask-list"></div>
+                <button id="clearMasksButton" type="button" class="text-button danger">Remove all masks</button>
+              </section>
             </div>
-            <button id="applyCalibrationButton" type="button" class="small-button full" disabled>Apply calibration</button>
           </details>
 
           <div id="planWarnings" class="warnings"></div>

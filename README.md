@@ -99,6 +99,16 @@ is always a proposal rather than an unquestioned measurement.
 All CAD model-space output is 1:1, in inches for imperial plans and millimeters
 for metric plans.
 
+The plan inspector uses a two-step workflow:
+
+1. **Measurements** contains rotation, units, detected scale options, and
+   two-point calibration.
+2. After a scale is saved, Measurements folds closed and
+   **Cleanup & masks** opens automatically.
+
+Existing calibrated plans open directly on the cleanup step. Measurements can
+still be reopened whenever the scale or units need correction.
+
 ## Blender cleanup filters
 
 Each plan can optionally remove text and restrict exported geometry to

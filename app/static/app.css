@@ -144,14 +144,27 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .primary-button:hover { background: var(--green-dark); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 .full { width: 100%; }
-.calibration, .cleanup, .exclusions { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 11px 0; }
-.calibration summary, .cleanup summary, .exclusions summary { cursor: pointer; font-size: 12px; font-weight: 750; }
+.workflow-step { border: 1px solid var(--line); background: #fbfcfa; }
+.workflow-step > summary { cursor: pointer; display: grid; grid-template-columns: 27px 1fr auto; align-items: center; gap: 9px; padding: 11px; list-style: none; }
+.workflow-step > summary::-webkit-details-marker { display: none; }
+.workflow-step > summary > span:nth-child(2) { display: grid; gap: 2px; }
+.workflow-step > summary strong { color: var(--ink); font-size: 12px; }
+.workflow-step > summary small { color: var(--muted); font-size: 9px; font-weight: 600; }
+.workflow-step[open] > summary { border-bottom: 1px solid var(--line); background: #f3f7f4; }
+.step-number { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #dce4de; color: var(--green-dark); font-size: 11px; font-weight: 800; }
+.workflow-step.complete .step-number { background: var(--green); color: white; }
+.step-check { visibility: hidden; color: var(--green); font-size: 15px; font-weight: 800; }
+.workflow-step.complete .step-check { visibility: visible; }
+.workflow-step.locked { opacity: .58; }
+.workflow-step.locked > summary { cursor: not-allowed; }
+.step-content { display: grid; gap: 13px; padding: 12px; }
+.calibration, .cleanup, .exclusions { padding-top: 10px; border-top: 1px solid var(--line); }
+.calibration > strong, .cleanup > strong, .section-heading strong { color: var(--ink); font-size: 11px; }
 .calibration p, .cleanup p, .cleanup > small, .exclusions p { color: var(--muted); font-size: 11px; line-height: 1.45; }
 .cleanup, .exclusions { display: grid; gap: 10px; }
-.cleanup summary, .exclusions summary { margin-bottom: 2px; }
 .cleanup .check-row { color: var(--ink); }
-.exclusions summary { display: flex; justify-content: space-between; }
-.exclusions summary span { color: var(--muted); font-size: 10px; }
+.section-heading { display: flex; justify-content: space-between; align-items: center; }
+.section-heading span { color: var(--muted); font-size: 10px; }
 .mask-list { display: grid; gap: 5px; }
 .mask-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; padding: 7px 8px; background: #fff2f1; border-left: 3px solid #b83239; }
 .mask-item span { font-size: 11px; font-weight: 750; }
