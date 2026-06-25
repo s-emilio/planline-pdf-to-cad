@@ -13,6 +13,7 @@ from pdf_plan_to_dwg.app.drawing_model import (
     _is_orthogonal_segment,
     build_drawing_model,
 )
+from pdf_plan_to_dwg.app.geometry import CadTransform
 from pdf_plan_to_dwg.app.models import PlanRegion, RectModel
 
 
@@ -117,7 +118,33 @@ def test_filter_settings_are_written_to_svg_metadata(vector_pdf, tmp_path):
         "remove_text": True,
         "orthogonal_only": True,
         "angle_tolerance_degrees": 5,
+        "exclude_regions": [],
     }
+
+
+def test_exclusion_mask_trims_exported_geometry(vector_pdf):
+    plan = confirmed_plan()
+    plan.exclude_regions = [
+        RectModel(x0=200, y0=70, x1=300, y1=440),
+    ]
+    model = build_drawing_model(vector_pdf, plan)
+
+    assert model.exclude_regions == plan.exclude_regions
+    assert model.unsupported["filtered_exclusion_segments"] > 0
+    mask = plan.exclude_regions[0]
+    transform = CadTransform(plan.crop, plan.units_per_point, plan.rotation)
+    transformed_corners = [
+        transform.point((mask.x0, mask.y0)),
+        transform.point((mask.x1, mask.y1)),
+    ]
+    x0 = min(point[0] for point in transformed_corners)
+    x1 = max(point[0] for point in transformed_corners)
+    y0 = min(point[1] for point in transformed_corners)
+    y1 = max(point[1] for point in transformed_corners)
+    for polyline in model.polylines:
+        for start, end in zip(polyline.points, polyline.points[1:]):
+            midpoint = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2)
+            assert not (x0 < midpoint[0] < x1 and y0 < midpoint[1] < y1)
 
 
 def test_full_job_export_keeps_dxf_when_oda_is_missing(vector_pdf, tmp_path, monkeypatch):

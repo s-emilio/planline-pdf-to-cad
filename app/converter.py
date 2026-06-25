@@ -146,6 +146,9 @@ def write_svg(model: DrawingModel, output_path: Path) -> None:
             "remove_text": model.remove_text,
             "orthogonal_only": model.orthogonal_only,
             "angle_tolerance_degrees": model.angle_tolerance,
+            "exclude_regions": [
+                region.model_dump() for region in model.exclude_regions
+            ],
         },
     }
     ET.SubElement(root, f"{{{namespace}}}metadata").text = json.dumps(metadata)
@@ -254,6 +257,9 @@ def report_for_model(
             "remove_text": model.remove_text,
             "orthogonal_only": model.orthogonal_only,
             "angle_tolerance_degrees": model.angle_tolerance,
+            "exclude_regions": [
+                region.model_dump() for region in model.exclude_regions
+            ],
         },
         "confidence": model.confidence,
         "drawing_extents": {"width": model.width, "height": model.height},

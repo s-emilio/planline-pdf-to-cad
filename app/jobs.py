@@ -111,6 +111,18 @@ def update_plan(state: JobState, plan_id: str, **changes) -> PlanRegion:
         )
         if updated.crop.x1 - updated.crop.x0 < 2 or updated.crop.y1 - updated.crop.y0 < 2:
             raise ValueError("The crop region is too small.")
+        normalized_masks: list[RectModel] = []
+        for mask in updated.exclude_regions:
+            mask = mask.normalized()
+            clipped = RectModel(
+                x0=max(updated.crop.x0, min(updated.crop.x1, mask.x0)),
+                y0=max(updated.crop.y0, min(updated.crop.y1, mask.y0)),
+                x1=max(updated.crop.x0, min(updated.crop.x1, mask.x1)),
+                y1=max(updated.crop.y0, min(updated.crop.y1, mask.y1)),
+            )
+            if clipped.x1 - clipped.x0 >= 2 and clipped.y1 - clipped.y0 >= 2:
+                normalized_masks.append(clipped)
+        updated.exclude_regions = normalized_masks
         state.plans[index] = updated
         save_state(state)
         return updated

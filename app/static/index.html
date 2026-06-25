@@ -146,6 +146,14 @@
             <small>Orthogonal mode removes diagonal lines, curves, and filled hatches. It can also remove legitimate angled walls, stairs, and door swings.</small>
           </details>
 
+          <details class="exclusions">
+            <summary>Exclusion masks <span id="maskCount">0 masks</span></summary>
+            <p>Draw rectangles over title blocks, legends, notes, or neighboring plans. Geometry inside them will not be exported.</p>
+            <button id="drawMaskButton" type="button" class="secondary-button full">Draw exclusion mask</button>
+            <div id="maskList" class="mask-list"></div>
+            <button id="clearMasksButton" type="button" class="text-button danger">Remove all masks</button>
+          </details>
+
           <details class="calibration">
             <summary>Two-point calibration</summary>
             <p>Click two points with a known distance on the plan preview.</p>

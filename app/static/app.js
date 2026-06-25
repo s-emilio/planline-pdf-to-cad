@@ -15,6 +15,8 @@ const state = {
   dragging: null,
   calibration: [],
   calibrationMode: false,
+  maskMode: false,
+  maskDraft: null,
   panMode: false,
   spaceDown: false,
 };
@@ -197,6 +199,14 @@ function drawCanvas() {
     if (selected) drawHandles(a, b);
   });
 
+  const plan = selectedPlan();
+  if (plan) {
+    (plan.exclude_regions || []).forEach((mask, index) => {
+      drawMask(mask, `Exclude ${index + 1}`);
+    });
+  }
+  if (state.maskDraft) drawMask(state.maskDraft, "New exclusion");
+
   if (state.calibration.length) {
     ctx.strokeStyle = "#d43f67";
     ctx.fillStyle = "#d43f67";
@@ -215,6 +225,27 @@ function drawCanvas() {
       ctx.stroke();
     }
   }
+}
+
+function drawMask(mask, label) {
+  const normalized = {
+    x0: Math.min(mask.x0, mask.x1),
+    y0: Math.min(mask.y0, mask.y1),
+    x1: Math.max(mask.x0, mask.x1),
+    y1: Math.max(mask.y0, mask.y1),
+  };
+  const a = pdfToCanvas(normalized.x0, normalized.y0);
+  const b = pdfToCanvas(normalized.x1, normalized.y1);
+  ctx.fillStyle = "rgba(184, 50, 57, .18)";
+  ctx.strokeStyle = "#b83239";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+  ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#b83239";
+  ctx.font = "700 10px system-ui";
+  ctx.fillText(label, a.x + 5, a.y + 14);
 }
 
 function drawHandles(a, b) {
@@ -277,6 +308,22 @@ canvas.addEventListener("pointerdown", (event) => {
     drawCanvas();
     return;
   }
+  if (state.maskMode && selectedPlan()) {
+    state.maskDraft = {
+      x0: pdfPoint.x,
+      y0: pdfPoint.y,
+      x1: pdfPoint.x,
+      y1: pdfPoint.y,
+    };
+    state.dragging = {
+      mode: "exclude-mask",
+      start: pdfPoint,
+    };
+    canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    drawCanvas();
+    return;
+  }
 
   const plans = [...pagePlans()].reverse();
   const clicked = plans.find((plan) => {
@@ -311,6 +358,12 @@ canvas.addEventListener("pointermove", (event) => {
     return;
   }
   const point = canvasToPdf(event.clientX - rect.left, event.clientY - rect.top);
+  if (state.dragging.mode === "exclude-mask") {
+    state.maskDraft.x1 = point.x;
+    state.maskDraft.y1 = point.y;
+    drawCanvas();
+    return;
+  }
   const dx = point.x - state.dragging.start.x;
   const dy = point.y - state.dragging.start.y;
   const crop = { ...state.dragging.crop };
@@ -334,6 +387,34 @@ canvas.addEventListener("pointerup", async (event) => {
     canvas.classList.remove("panning");
     return;
   }
+  if (state.dragging.mode === "exclude-mask") {
+    state.dragging = null;
+    const draft = state.maskDraft;
+    state.maskDraft = null;
+    state.maskMode = false;
+    const mask = {
+      x0: Math.min(draft.x0, draft.x1),
+      y0: Math.min(draft.y0, draft.y1),
+      x1: Math.max(draft.x0, draft.x1),
+      y1: Math.max(draft.y0, draft.y1),
+    };
+    if (mask.x1 - mask.x0 < 2 || mask.y1 - mask.y0 < 2) {
+      toast("Draw a larger exclusion area.", true);
+      drawCanvas();
+      return;
+    }
+    try {
+      await savePlan({
+        exclude_regions: [...(selectedPlan().exclude_regions || []), mask],
+      });
+      $("#canvasHint").textContent = "Exclusion mask saved. Draw another or export the plan.";
+      toast("Exclusion mask saved.");
+    } catch (error) {
+      toast(error.message, true);
+      await refreshJob();
+    }
+    return;
+  }
   state.dragging = null;
   try {
     await savePlan({ crop: selectedPlan().crop, confirmed: false });
@@ -345,7 +426,10 @@ canvas.addEventListener("pointerup", async (event) => {
 
 canvas.addEventListener("pointercancel", () => {
   state.dragging = null;
+  state.maskDraft = null;
+  state.maskMode = false;
   canvas.classList.remove("panning");
+  drawCanvas();
 });
 
 canvas.addEventListener("wheel", (event) => {
@@ -413,6 +497,15 @@ function renderInspector() {
   $("#orthogonalOnly").checked = Boolean(plan.orthogonal_only);
   $("#angleTolerance").value = String(plan.angle_tolerance || 3);
   $("#angleTolerance").disabled = !plan.orthogonal_only;
+  const masks = plan.exclude_regions || [];
+  $("#maskCount").textContent = `${masks.length} ${masks.length === 1 ? "mask" : "masks"}`;
+  $("#maskList").innerHTML = masks.map((mask, index) => `
+    <div class="mask-item">
+      <span>Exclude ${index + 1}</span>
+      <small>${Math.round(mask.x1 - mask.x0)} × ${Math.round(mask.y1 - mask.y0)} PDF pt</small>
+      <button type="button" data-mask-index="${index}">Remove</button>
+    </div>
+  `).join("");
   $("#confirmScaleButton").textContent = plan.scale_confirmed ? "Scale confirmed ✓" : "Confirm scale";
   $("#confirmScaleButton").disabled = !plan.units_per_point;
   $("#planWarnings").innerHTML = plan.warnings
@@ -494,6 +587,8 @@ async function selectPage(index) {
   state.planId = plans[0]?.id || null;
   state.calibration = [];
   state.calibrationMode = false;
+  state.maskMode = false;
+  state.maskDraft = null;
   state.view.initialized = false;
   const page = currentPage();
   $("#pageLabel").textContent = `Page ${index + 1}`;
@@ -509,6 +604,8 @@ function selectPlan(planId) {
   state.planId = planId;
   state.calibration = [];
   state.calibrationMode = false;
+  state.maskMode = false;
+  state.maskDraft = null;
   renderInspector();
   drawCanvas();
 }
@@ -646,9 +743,40 @@ $("#angleTolerance").addEventListener("change", async (event) => {
   } catch (error) { toast(error.message, true); }
 });
 
+$("#drawMaskButton").addEventListener("click", () => {
+  if (!selectedPlan()) return;
+  state.calibrationMode = false;
+  state.maskMode = true;
+  state.maskDraft = null;
+  $("#canvasHint").textContent = "Drag a rectangle over anything that should be excluded from export.";
+  toast("Drag an exclusion mask on the drawing.");
+});
+
+$("#clearMasksButton").addEventListener("click", async () => {
+  if (!selectedPlan()?.exclude_regions?.length) return;
+  try {
+    await savePlan({ exclude_regions: [] });
+    toast("All exclusion masks removed.");
+  } catch (error) { toast(error.message, true); }
+});
+
+$("#maskList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-mask-index]");
+  if (!button) return;
+  const index = Number(button.dataset.maskIndex);
+  const masks = [...(selectedPlan().exclude_regions || [])];
+  masks.splice(index, 1);
+  try {
+    await savePlan({ exclude_regions: masks });
+    toast("Exclusion mask removed.");
+  } catch (error) { toast(error.message, true); }
+});
+
 $("#pickPointsButton").addEventListener("click", () => {
   state.calibration = [];
   state.calibrationMode = true;
+  state.maskMode = false;
+  state.maskDraft = null;
   $("#applyCalibrationButton").disabled = true;
   $("#canvasHint").textContent = "Scroll to zoom, use Hand or Space to pan, then click the two known points.";
   drawCanvas();

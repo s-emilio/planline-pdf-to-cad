@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Iterable, Iterator, Sequence
 
 from shapely.geometry import GeometryCollection, LineString, MultiLineString, box
+from shapely.ops import unary_union
 
 from .models import RectModel
 
@@ -191,6 +192,35 @@ def clip_segment(start: Point, end: Point, rect: RectModel) -> list[Segment]:
     return output
 
 
+def clip_segment_excluding(
+    start: Point,
+    end: Point,
+    crop: RectModel,
+    exclusions: Sequence[RectModel],
+) -> list[Segment]:
+    geometry = LineString([start, end]).intersection(
+        box(crop.x0, crop.y0, crop.x1, crop.y1)
+    )
+    if exclusions and not geometry.is_empty:
+        masks = unary_union(
+            [box(rect.x0, rect.y0, rect.x1, rect.y1) for rect in exclusions]
+        )
+        geometry = geometry.difference(masks)
+    output: list[Segment] = []
+    geometries: Iterator = iter(())
+    if isinstance(geometry, LineString):
+        geometries = iter([geometry])
+    elif isinstance(geometry, (MultiLineString, GeometryCollection)):
+        geometries = (
+            item for item in geometry.geoms if isinstance(item, LineString)
+        )
+    for line in geometries:
+        coords = list(line.coords)
+        for index in range(len(coords) - 1):
+            output.append((coords[index], coords[index + 1]))
+    return output
+
+
 def cubic_point(points: Sequence[Point], t: float) -> Point:
     p0, p1, p2, p3 = points
     mt = 1 - t
@@ -202,4 +232,3 @@ def cubic_point(points: Sequence[Point], t: float) -> Point:
 
 def flatten_cubic(points: Sequence[Point], steps: int = 24) -> list[Point]:
     return [cubic_point(points, index / steps) for index in range(steps + 1)]
-

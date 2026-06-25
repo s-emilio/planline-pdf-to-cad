@@ -4,6 +4,7 @@ import pytest
 
 from pdf_plan_to_dwg.app.geometry import (
     CadTransform,
+    clip_segment_excluding,
     dedupe_segments,
     join_collinear_segments,
 )
@@ -42,3 +43,9 @@ def test_deduplicates_and_joins_collinear_segments():
     assert len(chains) == 1
     assert chains[0] in [[(0, 0), (10, 0), (20, 0)], [(20, 0), (10, 0), (0, 0)]]
 
+
+def test_exclusion_mask_splits_crossing_segment():
+    crop = RectModel(x0=0, y0=0, x1=100, y1=100)
+    mask = RectModel(x0=40, y0=20, x1=60, y1=80)
+    segments = clip_segment_excluding((0, 50), (100, 50), crop, [mask])
+    assert segments == [((0.0, 50.0), (40.0, 50.0)), ((60.0, 50.0), (100.0, 50.0))]

@@ -116,6 +116,15 @@ These are intentionally aggressive export filters. Orthogonal mode can remove
 real angled walls, stairs, ramps, door swings, and other useful geometry, so
 leave it disabled for irregular plans or make a second unfiltered export.
 
+### Exclusion masks
+
+Use **Draw exclusion mask** to drag one or more rectangular red masks over
+title blocks, legends, notes, adjacent plans, or other regions that should not
+be exported. Masks are saved per plan and can be removed individually.
+Linework crossing a mask is trimmed at its boundary rather than discarding the
+entire line. Masked text and fills are omitted, and curves crossing a mask are
+flattened into clipped editable line segments.
+
 ## Limitations
 
 - PDF line types and fonts are approximated when no direct CAD equivalent
