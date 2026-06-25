@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "planline-pdf-to-cad"
+version = "0.1.0"
+description = "Local web app for extracting editable SVG and CAD linework from vector PDF plansets"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "AGPL-3.0-or-later" }
+authors = [
+  { name = "s-emilio" }
+]
+keywords = ["pdf", "cad", "dxf", "dwg", "svg", "architectural-plans"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Framework :: FastAPI",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "PyMuPDF>=1.26,<2",
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.34,<1",
+  "ezdxf>=1.4,<2",
+  "shapely>=2.0,<3",
+  "python-multipart>=0.0.20,<1",
+  "Pillow>=11,<13",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<10",
+  "httpx>=0.28,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/s-emilio/planline-pdf-to-cad"
+Issues = "https://github.com/s-emilio/planline-pdf-to-cad/issues"
+
+[project.scripts]
+planline = "pdf_plan_to_dwg.__main__:main"
+
+[tool.setuptools]
+packages = ["pdf_plan_to_dwg", "pdf_plan_to_dwg.app"]
+
+[tool.setuptools.package-dir]
+pdf_plan_to_dwg = "."
+"pdf_plan_to_dwg.app" = "app"
+
+[tool.setuptools.package-data]
+"pdf_plan_to_dwg.app" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

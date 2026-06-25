@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planline — PDF to CAD</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <strong>Planline</strong>
+        <span>PDF → editable CAD</span>
+      </div>
+    </div>
+    <div id="odaStatus" class="status-pill">Checking DWG engine…</div>
+  </header>
+
+  <main>
+    <section id="uploadView" class="upload-view">
+      <div class="hero-copy">
+        <p class="eyebrow">LOCAL VECTOR EXTRACTION</p>
+        <h1>Turn a plan sheet into linework you can actually edit.</h1>
+        <p class="lede">Upload a digitally generated PDF planset. Planline finds likely floor plans, lets you confirm crop and scale, then produces editable SVG, DXF, and optional DWG files.</p>
+      </div>
+      <label id="dropZone" class="drop-zone">
+        <input id="fileInput" type="file" accept="application/pdf,.pdf">
+        <span class="upload-icon">↥</span>
+        <strong>Drop a PDF planset here</strong>
+        <span>or click to choose a file · up to 250 MB</span>
+      </label>
+      <div id="uploadError" class="upload-error hidden" role="alert"></div>
+      <p class="privacy-note">Everything stays on this computer. Scanned sheets are identified but not traced.</p>
+    </section>
+
+    <section id="workspaceView" class="workspace-view hidden">
+      <aside class="sidebar">
+        <div class="sidebar-heading">
+          <div>
+            <p class="eyebrow">PLANSET</p>
+            <h2 id="jobName">—</h2>
+          </div>
+          <button id="newJobButton" class="icon-button" title="Start over">×</button>
+        </div>
+        <div id="pageList" class="page-list"></div>
+        <button id="addPlanButton" class="secondary-button full">+ Add crop on this page</button>
+      </aside>
+
+      <section class="drawing-area">
+        <div class="canvas-toolbar">
+          <div>
+            <span id="pageLabel">Page 1</span>
+            <small id="pageStats"></small>
+          </div>
+          <div class="canvas-tools">
+            <div class="legend">
+              <span><i class="legend-box high"></i> detected</span>
+              <span><i class="legend-box low"></i> review</span>
+            </div>
+            <div class="zoom-controls" aria-label="Drawing zoom controls">
+              <button id="zoomOutButton" type="button" title="Zoom out">−</button>
+              <span id="zoomLevel">100%</span>
+              <button id="zoomInButton" type="button" title="Zoom in">+</button>
+              <button id="fitPageButton" type="button" title="Fit page">Fit</button>
+              <button id="panButton" type="button" title="Pan drawing">Hand</button>
+            </div>
+          </div>
+        </div>
+        <div id="canvasShell" class="canvas-shell">
+          <canvas id="planCanvas"></canvas>
+          <div id="canvasEmpty" class="canvas-empty">Choose a page</div>
+        </div>
+        <p id="canvasHint" class="canvas-hint">Scroll to zoom at the cursor. Use Hand or hold Space to pan. Drag crop handles to adjust the plan.</p>
+      </section>
+
+      <aside class="inspector">
+        <div id="noPlan" class="no-plan">
+          <p class="eyebrow">PLAN REGION</p>
+          <h2>Select a detected crop</h2>
+          <p>Choose a highlighted region on the sheet, or add one manually.</p>
+        </div>
+        <form id="planForm" class="hidden">
+          <div class="inspector-heading">
+            <div>
+              <p class="eyebrow">PLAN REGION</p>
+              <h2 id="planTitle">Plan</h2>
+            </div>
+            <button id="deletePlanButton" type="button" class="text-button danger">Delete</button>
+          </div>
+
+          <label>Drawing name
+            <input id="planName" type="text">
+          </label>
+
+          <div class="two-columns">
+            <label>Rotation
+              <select id="rotation">
+                <option value="0">0°</option>
+                <option value="90">90°</option>
+                <option value="180">180°</option>
+                <option value="270">270°</option>
+              </select>
+            </label>
+            <label>CAD units
+              <select id="units">
+                <option value="in">Inches</option>
+                <option value="mm">Millimeters</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="scale-card">
+            <div>
+              <span class="field-label">Drawing scale</span>
+              <strong id="scaleLabel">Not detected</strong>
+              <small id="scaleValue">Calibration required</small>
+            </div>
+            <button id="confirmScaleButton" type="button" class="small-button">Confirm scale</button>
+          </div>
+
+          <details class="calibration">
+            <summary>Two-point calibration</summary>
+            <p>Click two points with a known distance on the plan preview.</p>
+            <button id="pickPointsButton" type="button" class="secondary-button full">Pick two points</button>
+            <div class="calibration-row">
+              <input id="knownDistance" type="number" min="0" step="any" placeholder="Distance">
+              <select id="knownUnits">
+                <option value="ft">feet</option>
+                <option value="in">inches</option>
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="m">meters</option>
+              </select>
+            </div>
+            <button id="applyCalibrationButton" type="button" class="small-button full" disabled>Apply calibration</button>
+          </details>
+
+          <div id="planWarnings" class="warnings"></div>
+          <label class="check-row">
+            <input id="confirmPlan" type="checkbox">
+            <span>I reviewed this crop and want to export it.</span>
+          </label>
+          <button id="savePlanButton" type="submit" class="primary-button full">Save plan settings</button>
+        </form>
+
+        <div class="export-panel">
+          <div>
+            <strong id="exportCount">0 plans ready</strong>
+            <small>One drawing per confirmed crop</small>
+          </div>
+          <label class="export-format">Format
+            <select id="exportFormat">
+              <option value="all">SVG + CAD</option>
+              <option value="svg">SVG only</option>
+              <option value="cad">CAD only</option>
+            </select>
+          </label>
+          <button id="exportButton" class="primary-button" disabled>Export files</button>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <section id="exportProgress" class="progress-overlay hidden" aria-live="polite">
+    <div class="progress-dialog">
+      <div class="progress-heading">
+        <div>
+          <p class="eyebrow">VECTOR EXPORT</p>
+          <h2 id="progressTitle">Building vector files</h2>
+        </div>
+        <strong id="progressPercent">0%</strong>
+      </div>
+      <div class="progress-track"><span id="progressBar"></span></div>
+      <p id="progressStep" class="progress-step">Starting…</p>
+      <div id="progressLog" class="progress-log"></div>
+      <div class="progress-actions">
+        <button id="closeProgressButton" class="secondary-button hidden">Close</button>
+        <a id="downloadExportButton" class="primary-button hidden" href="#">Download ZIP</a>
+      </div>
+    </div>
+  </section>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
