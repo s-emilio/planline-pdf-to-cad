@@ -101,6 +101,9 @@ class CalibrationRequest(BaseModel):
     y2: float
     distance: float = Field(gt=0)
     units: Literal["in", "ft", "mm", "cm", "m"]
+    name: str | None = None
+    crop: RectModel | None = None
+    rotation: Literal[0, 90, 180, 270] | None = None
 
 
 class ExportRequest(BaseModel):

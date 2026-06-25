@@ -22,10 +22,23 @@ def test_upload_review_and_calibrate(vector_pdf, tmp_path, monkeypatch):
 
     calibration = client.post(
         f"/api/jobs/{job['id']}/plans/{plan['id']}/calibrate",
-        json={"x1": 100, "y1": 100, "x2": 172, "y2": 100, "distance": 4, "units": "ft"},
+        json={
+            "x1": 100,
+            "y1": 100,
+            "x2": 172,
+            "y2": 100,
+            "distance": 4,
+            "units": "ft",
+            "name": "Saved Floor Plan",
+            "rotation": 90,
+            "crop": plan["crop"],
+        },
     )
     assert calibration.status_code == 200
     assert calibration.json()["scale_confirmed"] is True
+    assert calibration.json()["confirmed"] is True
+    assert calibration.json()["name"] == "Saved Floor Plan"
+    assert calibration.json()["rotation"] == 90
     assert calibration.json()["units_per_point"] == pytest.approx(48 / 72)
 
 

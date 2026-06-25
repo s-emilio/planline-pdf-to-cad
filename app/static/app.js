@@ -336,7 +336,6 @@ canvas.addEventListener("pointerup", async (event) => {
   state.dragging = null;
   try {
     await savePlan({ crop: selectedPlan().crop, confirmed: false });
-    $("#confirmPlan").checked = false;
   } catch (error) {
     toast(error.message, true);
     await refreshJob();
@@ -387,7 +386,6 @@ function renderInspector() {
     : "Calibration required";
   $("#confirmScaleButton").textContent = plan.scale_confirmed ? "Scale confirmed ✓" : "Confirm scale";
   $("#confirmScaleButton").disabled = !plan.units_per_point;
-  $("#confirmPlan").checked = plan.confirmed;
   $("#planWarnings").innerHTML = plan.warnings
     .map((warning) => `<div class="warning-item">${escapeHtml(warning)}</div>`).join("");
 }
@@ -504,7 +502,6 @@ async function savePlan(overrides = {}) {
     name: $("#planName").value.trim() || plan.name,
     rotation: Number($("#rotation").value),
     units: $("#units").value,
-    confirmed: $("#confirmPlan").checked,
     ...overrides,
   };
   const updated = await api(`/api/jobs/${state.job.id}/plans/${plan.id}`, {
@@ -574,16 +571,12 @@ $("#fileInput").addEventListener("change", (event) => handleUpload(event.target.
 }));
 $("#dropZone").addEventListener("drop", (event) => handleUpload(event.dataTransfer.files[0]));
 
-$("#planForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try { await savePlan(); toast("Plan settings saved."); }
-  catch (error) { toast(error.message, true); }
-});
+$("#planForm").addEventListener("submit", (event) => event.preventDefault());
 
 $("#confirmScaleButton").addEventListener("click", async () => {
   try {
-    await savePlan({ scale_confirmed: true });
-    toast("Scale confirmed.");
+    await savePlan({ scale_confirmed: true, confirmed: true });
+    toast("Scale confirmed and plan saved.");
   } catch (error) { toast(error.message, true); }
 });
 
@@ -630,13 +623,16 @@ $("#applyCalibrationButton").addEventListener("click", async () => {
       body: JSON.stringify({
         x1: a.x, y1: a.y, x2: b.x, y2: b.y,
         distance, units: $("#knownUnits").value,
+        name: $("#planName").value.trim() || selectedPlan().name,
+        crop: selectedPlan().crop,
+        rotation: Number($("#rotation").value),
       }),
     });
     const index = state.job.plans.findIndex((plan) => plan.id === updated.id);
     state.job.plans[index] = updated;
     state.calibration = [];
     renderInspector(); renderExportState(); drawCanvas();
-    toast("Manual scale applied and confirmed.");
+    toast("Calibration applied and plan saved.");
   } catch (error) { toast(error.message, true); }
 });
 

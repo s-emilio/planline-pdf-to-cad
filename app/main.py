@@ -114,14 +114,26 @@ def create_plan(job_id: str, request: PlanCreate):
 def calibrate_plan(job_id: str, plan_id: str, request: CalibrationRequest):
     state = _state(job_id)
     try:
-        units, units_per_point = calibration_units_per_point(**request.model_dump())
+        calibration = request.model_dump(
+            include={"x1", "y1", "x2", "y2", "distance", "units"}
+        )
+        units, units_per_point = calibration_units_per_point(**calibration)
+        plan_changes = {
+            key: value
+            for key, value in request.model_dump(
+                include={"name", "crop", "rotation"}
+            ).items()
+            if value is not None
+        }
         return update_plan(
             state,
             plan_id,
+            **plan_changes,
             units=units,
             units_per_point=units_per_point,
             scale_label=f"Manual: {request.distance:g} {request.units}",
             scale_confirmed=True,
+            confirmed=True,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail="Plan not found.") from None
