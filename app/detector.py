@@ -7,6 +7,7 @@ import pymupdf
 
 from .geometry import expand_rect, rect_iou
 from .models import PageInfo, PlanRegion, RectModel
+from .ocr import ocr_scale_candidates
 from .scales import parse_scale_candidates
 
 
@@ -50,6 +51,18 @@ def _contains_point(rect: RectModel, x: float, y: float) -> bool:
     return rect.x0 <= x <= rect.x1 and rect.y0 <= y <= rect.y1
 
 
+def _scale_distance(scale_rect: RectModel | None, plan_rect: RectModel) -> float:
+    if scale_rect is None:
+        return 1_000_000
+    scale_x = (scale_rect.x0 + scale_rect.x1) / 2
+    scale_y = (scale_rect.y0 + scale_rect.y1) / 2
+    if _contains_point(plan_rect, scale_x, scale_y):
+        return 0
+    plan_x = (plan_rect.x0 + plan_rect.x1) / 2
+    plan_y = (plan_rect.y0 + plan_rect.y1) / 2
+    return math.hypot(scale_x - plan_x, scale_y - plan_y)
+
+
 def _image_coverage(page: pymupdf.Page) -> float:
     page_area = max(page.rect.width * page.rect.height, 1)
     area = 0.0
@@ -81,6 +94,8 @@ def analyze_page(page: pymupdf.Page, page_index: int) -> tuple[PageInfo, list[Pl
     raster_only = vector_items < 10 and image_coverage >= 0.35
     text = page.get_text("text")
     scale_candidates = parse_scale_candidates(text)
+    if not scale_candidates and not raster_only and vector_items >= 4:
+        scale_candidates = ocr_scale_candidates(page)
 
     page_info = PageInfo(
         index=page_index,
@@ -197,7 +212,17 @@ def analyze_page(page: pymupdf.Page, page_index: int) -> tuple[PageInfo, list[Pl
 
     plans: list[PlanRegion] = []
     for index, detection in enumerate(kept, 1):
-        candidate = scale_candidates[0] if scale_candidates else None
+        nearby_candidates = sorted(
+            scale_candidates,
+            key=lambda item: _scale_distance(item.rect, detection.rect),
+        )
+        candidate = nearby_candidates[0] if nearby_candidates else None
+        multiple_scales = len(
+            {
+                (item.units, round(item.units_per_point, 8))
+                for item in nearby_candidates
+            }
+        ) > 1
         plans.append(
             PlanRegion(
                 id=f"p{page_index + 1}-{index}",
@@ -214,7 +239,12 @@ def analyze_page(page: pymupdf.Page, page_index: int) -> tuple[PageInfo, list[Pl
                     if detection.score < 0.6
                     else []
                 )
-                + ([] if candidate else ["No drawing scale detected. Calibrate manually."]),
+                + ([] if candidate else ["No drawing scale detected. Calibrate manually."])
+                + (
+                    ["Multiple drawing scales detected. Confirm the proposed scale or calibrate manually."]
+                    if multiple_scales
+                    else []
+                ),
             )
         )
     return page_info, plans

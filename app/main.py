@@ -45,12 +45,14 @@ def _state(job_id: str):
 @app.get("/api/health")
 def health() -> dict:
     from .converter import find_oda_converter
+    from .ocr import tesseract_available
 
     converter = find_oda_converter()
     return {
         "ok": True,
         "oda_available": converter is not None,
         "oda_path": str(converter) if converter else None,
+        "ocr_available": tesseract_available(),
     }
 
 

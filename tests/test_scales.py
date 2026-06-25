@@ -21,6 +21,26 @@ def test_parses_metric_ratio():
     assert candidate.units_per_point == pytest.approx(100 * 25.4 / 72)
 
 
+def test_parses_multiple_imperial_scales_from_ocr_text():
+    candidates = parse_scale_candidates(
+        '(SCALE: 1/4" = |\'-0" OR 1/8" = I\'-O0" PREFERRED)',
+        source="OCR",
+        confidence=0.7,
+    )
+    assert len(candidates) == 2
+    assert candidates[0].units_per_point == pytest.approx(48 / 72)
+    assert candidates[1].units_per_point == pytest.approx(96 / 72)
+    assert candidates[0].source == "OCR imperial scale"
+    assert candidates[0].confidence == pytest.approx(0.7)
+
+
+def test_parses_decimal_and_unicode_fraction_scales():
+    candidates = parse_scale_candidates('0.25" = 1\'-0" and ⅛" = 1\'-0"')
+    assert [candidate.units_per_point for candidate in candidates] == pytest.approx(
+        [48 / 72, 96 / 72]
+    )
+
+
 def test_manual_calibration_normalizes_output_units():
     units, factor = calibration_units_per_point(0, 0, 72, 0, 10, "ft")
     assert units == "in"
@@ -30,4 +50,3 @@ def test_manual_calibration_normalizes_output_units():
 def test_manual_calibration_rejects_identical_points():
     with pytest.raises(ValueError):
         calibration_units_per_point(10, 10, 10, 10, 5, "m")
-

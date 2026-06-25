@@ -31,6 +31,7 @@ class ScaleCandidate(BaseModel):
     units_per_point: float
     confidence: float = Field(ge=0, le=1)
     source: str
+    rect: RectModel | None = None
 
 
 class PlanRegion(BaseModel):

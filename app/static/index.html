@@ -116,9 +116,13 @@
               <span class="field-label">Drawing scale</span>
               <strong id="scaleLabel">Not detected</strong>
               <small id="scaleValue">Calibration required</small>
+              <small id="scaleSource"></small>
             </div>
             <button id="confirmScaleButton" type="button" class="small-button">Confirm scale</button>
           </div>
+          <label id="scaleCandidateRow" class="hidden">Detected scale options
+            <select id="scaleCandidate"></select>
+          </label>
 
           <details class="calibration">
             <summary>Two-point calibration</summary>

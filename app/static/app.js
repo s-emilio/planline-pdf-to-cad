@@ -50,11 +50,12 @@ async function checkHealth() {
   try {
     const health = await api("/api/health");
     const pill = $("#odaStatus");
+    const ocr = health.ocr_available ? " · OCR" : "";
     if (health.oda_available) {
-      pill.textContent = "SVG · DXF · DWG ready";
+      pill.textContent = `SVG · DXF · DWG${ocr} ready`;
       pill.className = "status-pill ready";
     } else {
-      pill.textContent = "SVG · DXF ready · ODA not found";
+      pill.textContent = `SVG · DXF${ocr} ready · ODA not found`;
       pill.className = "status-pill warn";
     }
   } catch (_) {
@@ -384,6 +385,30 @@ function renderInspector() {
   $("#scaleValue").textContent = plan.units_per_point
     ? `${plan.units_per_point.toPrecision(7)} ${plan.units} per PDF point`
     : "Calibration required";
+  const candidates = [];
+  const seen = new Set();
+  for (const candidate of currentPage().scale_candidates || []) {
+    const key = `${candidate.units}:${candidate.units_per_point.toFixed(9)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push(candidate);
+  }
+  const candidateSelect = $("#scaleCandidate");
+  candidateSelect.innerHTML = candidates.map((candidate, index) => {
+    const confidence = Math.round(candidate.confidence * 100);
+    return `<option value="${index}">${escapeHtml(candidate.label)} · ${confidence}%</option>`;
+  }).join("");
+  const selectedIndex = candidates.findIndex((candidate) =>
+    candidate.units === plan.units
+    && Math.abs(candidate.units_per_point - plan.units_per_point) < 1e-9
+  );
+  if (selectedIndex >= 0) candidateSelect.value = String(selectedIndex);
+  candidateSelect.dataset.candidates = JSON.stringify(candidates);
+  $("#scaleCandidateRow").classList.toggle("hidden", candidates.length < 2);
+  const selectedCandidate = selectedIndex >= 0 ? candidates[selectedIndex] : null;
+  $("#scaleSource").textContent = selectedCandidate
+    ? `${selectedCandidate.source} · ${Math.round(selectedCandidate.confidence * 100)}% confidence`
+    : "";
   $("#confirmScaleButton").textContent = plan.scale_confirmed ? "Scale confirmed ✓" : "Confirm scale";
   $("#confirmScaleButton").disabled = !plan.units_per_point;
   $("#planWarnings").innerHTML = plan.warnings
@@ -577,6 +602,22 @@ $("#confirmScaleButton").addEventListener("click", async () => {
   try {
     await savePlan({ scale_confirmed: true, confirmed: true });
     toast("Scale confirmed and plan saved.");
+  } catch (error) { toast(error.message, true); }
+});
+
+$("#scaleCandidate").addEventListener("change", async (event) => {
+  const candidates = JSON.parse(event.target.dataset.candidates || "[]");
+  const candidate = candidates[Number(event.target.value)];
+  if (!candidate) return;
+  try {
+    await savePlan({
+      units: candidate.units,
+      units_per_point: candidate.units_per_point,
+      scale_label: candidate.label,
+      scale_confirmed: false,
+      confirmed: false,
+    });
+    toast("Detected scale selected. Confirm it to save the plan.");
   } catch (error) { toast(error.message, true); }
 });
 
