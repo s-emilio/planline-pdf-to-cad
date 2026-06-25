@@ -89,7 +89,8 @@ is always a proposal rather than an unquestioned measurement.
   the current crop, name, rotation, units, and scale and makes the plan ready
   for export.
 - When multiple scales are detected, choose the correct option from
-  **Detected scale options**, then confirm it.
+  **Detected scale options**. Selecting an option immediately saves the plan
+  and makes it ready for export.
 - When detection is wrong or absent, open **Two-point calibration**, click two
   known points, enter their real-world distance, and choose
   **Apply calibration**. Applying calibration immediately saves the plan and

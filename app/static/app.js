@@ -618,10 +618,10 @@ $("#scaleCandidate").addEventListener("change", async (event) => {
       units: candidate.units,
       units_per_point: candidate.units_per_point,
       scale_label: candidate.label,
-      scale_confirmed: false,
-      confirmed: false,
+      scale_confirmed: true,
+      confirmed: true,
     });
-    toast("Detected scale selected. Confirm it to save the plan.");
+    toast("Detected scale selected and plan saved.");
   } catch (error) { toast(error.message, true); }
 });
 
