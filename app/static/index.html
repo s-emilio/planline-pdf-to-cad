@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Planline — PDF to CAD</title>
-  <link rel="stylesheet" href="/app.css?v=20260625-blend1">
+  <link rel="stylesheet" href="/app.css?v=20260626-projecthome3">
 </head>
 <body>
   <header class="topbar">
@@ -20,19 +20,44 @@
 
   <main>
     <section id="uploadView" class="upload-view">
-      <div class="hero-copy">
-        <p class="eyebrow">LOCAL VECTOR EXTRACTION</p>
-        <h1>Turn a plan sheet into linework you can actually edit.</h1>
-        <p class="lede">Upload a digitally generated PDF planset. Planline finds likely floor plans, lets you confirm crop and scale, then produces editable SVG, DXF, and optional DWG files.</p>
+      <div class="project-home">
+        <div class="home-intro">
+          <p class="eyebrow">LOCAL PROJECT LIBRARY</p>
+          <h1>Plans that stay where you left them.</h1>
+          <p class="lede">Start from a vector PDF, reopen a recent project, or import a portable Planline project file. Everything remains on this computer.</p>
+        </div>
+        <section class="new-project-panel" aria-label="Create project from PDF">
+          <label id="dropZone" class="drop-zone">
+            <input id="fileInput" type="file" accept="application/pdf,.pdf">
+            <span class="upload-icon">↥</span>
+            <strong>Drop a PDF planset here</strong>
+            <span>or click to choose one · vector PDF · up to 250 MB</span>
+          </label>
+          <label class="project-name-field">Project name <span>optional</span>
+            <input id="newProjectName" type="text" maxlength="200" placeholder="Uses the PDF filename when blank">
+          </label>
+          <div id="uploadError" class="upload-error hidden" role="alert"></div>
+          <p class="privacy-note">Scanned sheets are identified but not traced.</p>
+        </section>
+        <section class="recent-projects" aria-labelledby="recentProjectsTitle">
+          <div class="recent-heading">
+            <div>
+              <p class="eyebrow">RECENT</p>
+              <h2 id="recentProjectsTitle">Your projects</h2>
+            </div>
+            <div class="recent-heading-actions">
+              <button id="refreshProjectsButton" class="text-button" type="button">Refresh</button>
+              <label class="secondary-button file-action compact">
+                <input id="projectFileInput" type="file" accept=".planline,application/vnd.planline.project+zip">
+                Import .planline
+              </label>
+            </div>
+          </div>
+          <div id="recentProjectList" class="recent-project-list">
+            <p class="recent-empty">Loading projects…</p>
+          </div>
+        </section>
       </div>
-      <label id="dropZone" class="drop-zone">
-        <input id="fileInput" type="file" accept="application/pdf,.pdf">
-        <span class="upload-icon">↥</span>
-        <strong>Drop a PDF planset here</strong>
-        <span>or click to choose a file · up to 250 MB</span>
-      </label>
-      <div id="uploadError" class="upload-error hidden" role="alert"></div>
-      <p class="privacy-note">Everything stays on this computer. Scanned sheets are identified but not traced.</p>
     </section>
 
     <section id="workspaceView" class="workspace-view hidden">
@@ -41,11 +66,13 @@
           <div>
             <p class="eyebrow">PLANSET</p>
             <h2 id="jobName">—</h2>
+            <small id="projectSaveStatus" class="project-save-status">Saved locally</small>
           </div>
-          <button id="newJobButton" class="icon-button" title="Start over">×</button>
+          <button id="newJobButton" class="icon-button" title="Close project">×</button>
         </div>
         <div id="pageList" class="page-list"></div>
         <button id="addPlanButton" class="secondary-button full">+ Add crop on this page</button>
+        <a id="exportProjectButton" class="secondary-button full project-download" href="#">Export Project File</a>
       </aside>
 
       <section class="drawing-area">
@@ -60,6 +87,8 @@
               <span><i class="legend-box low"></i> review</span>
             </div>
             <div class="zoom-controls" aria-label="Drawing zoom controls">
+              <button id="undoEditButton" type="button" title="Undo plan edit" disabled>Undo</button>
+              <button id="redoEditButton" type="button" title="Redo plan edit" disabled>Redo</button>
               <button id="zoomOutButton" type="button" title="Zoom out">−</button>
               <span id="zoomLevel">100%</span>
               <button id="zoomInButton" type="button" title="Zoom in">+</button>
@@ -229,6 +258,6 @@
     </div>
   </section>
   <div id="toast" class="toast hidden"></div>
-  <script src="/app.js?v=20260625-blend1"></script>
+  <script src="/app.js?v=20260625-projecthome1"></script>
 </body>
 </html>

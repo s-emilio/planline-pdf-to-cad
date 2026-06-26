@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from threading import Thread
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -13,19 +13,33 @@ from .jobs import (
     create_job,
     delete_plan,
     export_job,
+    import_project_package,
     job_dir,
+    list_projects,
     load_state,
+    package_project,
     render_page_preview,
     save_state,
+    duplicate_project,
+    update_project,
     update_plan,
 )
-from .models import CalibrationRequest, ExportRequest, PlanCreate, PlanUpdate
+from .models import (
+    CalibrationRequest,
+    ExportRequest,
+    PlanCreate,
+    PlanUpdate,
+    ProjectDuplicateRequest,
+    ProjectUpdate,
+)
+from .project_package import ProjectPackageError
 from .scales import calibration_units_per_point
 
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
+MAX_PROJECT_UPLOAD_BYTES = 512 * 1024 * 1024
 
 app = FastAPI(
     title="PDF Planset to Editable DWG",
@@ -77,6 +91,99 @@ async def upload_job(file: UploadFile = File(...)):
         return state
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/projects")
+async def create_project(
+    file: UploadFile = File(...),
+    name: str | None = Form(default=None),
+):
+    filename = file.filename or "planset.pdf"
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Upload a PDF file.")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="PDF exceeds the 250 MB local limit.")
+    try:
+        state = create_job(filename, content, project_name=name)
+        if state.status == "error":
+            raise HTTPException(
+                status_code=422,
+                detail=f"PDF analysis failed: {state.error or 'unknown error'}",
+            )
+        return state
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/projects")
+def get_projects(include_archived: bool = False):
+    return list_projects(include_archived=include_archived)
+
+
+@app.post("/api/projects/import")
+async def import_project(file: UploadFile = File(...)):
+    filename = file.filename or "project.planline"
+    if not filename.lower().endswith(".planline"):
+        raise HTTPException(status_code=400, detail="Choose a .planline project file.")
+    content = await file.read(MAX_PROJECT_UPLOAD_BYTES + 1)
+    if len(content) > MAX_PROJECT_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Project file exceeds the 512 MB local limit.",
+        )
+    try:
+        return import_project_package(content)
+    except ProjectPackageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str):
+    return _state(project_id)
+
+
+@app.patch("/api/projects/{project_id}")
+def patch_project(project_id: str, change: ProjectUpdate):
+    state = _state(project_id)
+    try:
+        return update_project(
+            state,
+            **change.model_dump(exclude_unset=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/projects/{project_id}/duplicate")
+def copy_project(
+    project_id: str,
+    request: ProjectDuplicateRequest | None = None,
+):
+    state = _state(project_id)
+    return duplicate_project(state, request.name if request else None)
+
+
+@app.get("/api/projects/{project_id}/package")
+def download_project_package(project_id: str):
+    state = _state(project_id)
+    try:
+        package = package_project(state)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(
+        package,
+        media_type="application/vnd.planline.project+zip",
+        filename=package.name,
+    )
+
+
+@app.delete("/api/projects/{project_id}", status_code=204)
+def delete_project(project_id: str):
+    try:
+        cleanup_job(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found.") from None
 
 
 @app.get("/api/jobs/{job_id}")
@@ -137,6 +244,7 @@ def calibrate_plan(job_id: str, plan_id: str, request: CalibrationRequest):
             units=units,
             units_per_point=units_per_point,
             scale_label=f"Manual: {request.distance:g} {request.units}",
+            calibration=calibration,
             scale_confirmed=True,
             confirmed=True,
         )

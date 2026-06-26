@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import shutil
 import tempfile
@@ -22,10 +24,14 @@ from .converter import (
     write_svg,
 )
 from .detector import analyze_document
-from .models import JobState, PlanRegion, RectModel
+from .models import JobState, PlanRegion, ProjectSummary, RectModel, utc_now
+from .project_models import job_from_manifest, manifest_from_job
+from .project_package import read_project_package, write_project_package
 
 
-JOBS_ROOT = Path(tempfile.gettempdir()) / "pdf-plan-to-dwg-jobs"
+JOBS_ROOT = Path(
+    os.environ.get("PLANLINE_PROJECTS_DIR", Path.home() / "Planline Projects")
+).expanduser()
 
 
 def ensure_jobs_root() -> Path:
@@ -38,6 +44,10 @@ def job_dir(job_id: str) -> Path:
 
 
 def state_path(job_id: str) -> Path:
+    return job_dir(job_id) / "project.json"
+
+
+def legacy_state_path(job_id: str) -> Path:
     return job_dir(job_id) / "job.json"
 
 
@@ -46,7 +56,9 @@ def pdf_path(job_id: str) -> Path:
 
 
 def save_state(state: JobState) -> None:
+    state.updated_at = utc_now()
     destination = state_path(state.id)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(".json.tmp")
     temporary.write_text(state.model_dump_json(indent=2), encoding="utf-8")
     temporary.replace(destination)
@@ -73,9 +85,18 @@ def _resolved_plan_warnings(plan: PlanRegion) -> list[str]:
 def load_state(job_id: str) -> JobState:
     path = state_path(job_id)
     if not path.is_file():
+        path = legacy_state_path(job_id)
+    if not path.is_file():
         raise FileNotFoundError(job_id)
     state = JobState.model_validate_json(path.read_text(encoding="utf-8"))
     changed = False
+    if not state.project_name:
+        state.project_name = Path(state.filename).stem
+        changed = True
+    source = pdf_path(job_id)
+    if not state.source_sha256 and source.is_file():
+        state.source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+        changed = True
     for plan in state.plans:
         if plan.scale_confirmed and plan.units_per_point and not plan.confirmed:
             plan.confirmed = True
@@ -89,14 +110,27 @@ def load_state(job_id: str) -> JobState:
     return state
 
 
-def create_job(filename: str, content: bytes) -> JobState:
+def create_job(
+    filename: str,
+    content: bytes,
+    project_name: str | None = None,
+) -> JobState:
     if not content.startswith(b"%PDF"):
         raise ValueError("The uploaded file is not a PDF.")
     job_id = uuid.uuid4().hex[:16]
     directory = job_dir(job_id)
     directory.mkdir(parents=True)
     pdf_path(job_id).write_bytes(content)
-    state = JobState(id=job_id, filename=Path(filename).name)
+    clean_filename = Path(filename).name
+    clean_project_name = (project_name or Path(clean_filename).stem).strip()
+    if not clean_project_name:
+        clean_project_name = "Untitled Project"
+    state = JobState(
+        id=job_id,
+        filename=clean_filename,
+        project_name=clean_project_name[:200],
+        source_sha256=hashlib.sha256(content).hexdigest(),
+    )
     save_state(state)
     try:
         pages, plans, warnings = analyze_document(str(pdf_path(job_id)))
@@ -193,9 +227,10 @@ def render_page_preview(job_id: str, page_index: int) -> Path:
     state = load_state(job_id)
     if page_index < 0 or page_index >= len(state.pages):
         raise IndexError(page_index)
-    destination = job_dir(job_id) / f"page-{page_index + 1}.png"
+    destination = job_dir(job_id) / "previews" / f"page-{page_index + 1:03d}.png"
     if destination.exists():
         return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
     document = pymupdf.open(pdf_path(job_id))
     try:
         page = document[page_index]
@@ -243,7 +278,7 @@ def export_job(state: JobState, export_format: str = "all") -> Path:
     state.export_events = []
     state.export_format = export_format
     _record_export_event(state, 1, "Starting vector export")
-    output_dir = job_dir(state.id) / "export"
+    output_dir = job_dir(state.id) / "exports"
     shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(parents=True)
     reports: list[dict] = []
@@ -416,3 +451,142 @@ def cleanup_job(job_id: str) -> None:
     if not directory.exists():
         raise FileNotFoundError(job_id)
     shutil.rmtree(directory)
+
+
+def project_summary(state: JobState) -> ProjectSummary:
+    return ProjectSummary(
+        id=state.id,
+        name=state.project_name or Path(state.filename).stem,
+        filename=state.filename,
+        created_at=state.created_at,
+        updated_at=state.updated_at,
+        archived=state.archived,
+        page_count=len(state.pages),
+        plan_count=len(state.plans),
+        status=state.status,
+    )
+
+
+def list_projects(*, include_archived: bool = False) -> list[ProjectSummary]:
+    projects: list[ProjectSummary] = []
+    for directory in ensure_jobs_root().iterdir():
+        if not directory.is_dir():
+            continue
+        try:
+            state = load_state(directory.name)
+        except (FileNotFoundError, ValueError):
+            continue
+        if state.archived and not include_archived:
+            continue
+        projects.append(project_summary(state))
+    return sorted(projects, key=lambda project: project.updated_at, reverse=True)
+
+
+def update_project(
+    state: JobState,
+    *,
+    name: str | None = None,
+    archived: bool | None = None,
+) -> JobState:
+    if name is not None:
+        clean_name = name.strip()
+        if not clean_name:
+            raise ValueError("Project name cannot be empty.")
+        state.project_name = clean_name[:200]
+    if archived is not None:
+        state.archived = archived
+    save_state(state)
+    return state
+
+
+def duplicate_project(state: JobState, name: str | None = None) -> JobState:
+    new_id = uuid.uuid4().hex[:16]
+    destination = job_dir(new_id)
+    shutil.copytree(job_dir(state.id), destination)
+    duplicate = state.model_copy(deep=True)
+    duplicate.id = new_id
+    duplicate.project_name = (
+        name.strip() if name and name.strip() else f"{project_summary(state).name} Copy"
+    )[:200]
+    duplicate.created_at = utc_now()
+    duplicate.updated_at = duplicate.created_at
+    duplicate.archived = False
+    duplicate.status = "ready"
+    duplicate.error = None
+    duplicate.export_name = None
+    duplicate.export_progress = 0
+    duplicate.export_step = None
+    duplicate.export_events = []
+    shutil.rmtree(destination / "exports", ignore_errors=True)
+    for generated in destination.glob("*.zip"):
+        generated.unlink()
+    legacy = destination / "job.json"
+    legacy.unlink(missing_ok=True)
+    save_state(duplicate)
+    return duplicate
+
+
+def import_project_package(content: bytes) -> JobState:
+    temporary_path: Path | None = None
+    project_id = uuid.uuid4().hex[:16]
+    destination = job_dir(project_id)
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".planline", delete=False) as temporary:
+            temporary.write(content)
+            temporary_path = Path(temporary.name)
+        loaded = read_project_package(temporary_path)
+        state = job_from_manifest(loaded.manifest, project_id=project_id)
+        destination.mkdir(parents=True)
+        pdf_path(project_id).write_bytes(loaded.source_pdf)
+        _write_imported_files(destination / "previews", loaded.previews)
+        _write_imported_files(destination / "exports", loaded.exports)
+        save_state(state)
+        return state
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
+    finally:
+        if temporary_path:
+            temporary_path.unlink(missing_ok=True)
+
+
+def package_project(state: JobState) -> Path:
+    source = pdf_path(state.id)
+    source_content = source.read_bytes()
+    checksum = hashlib.sha256(source_content).hexdigest()
+    state.source_sha256 = checksum
+    manifest = manifest_from_job(
+        state,
+        project_name=project_summary(state).name,
+        source_sha256=checksum,
+        source_size_bytes=len(source_content),
+    )
+    previews = _directory_files(job_dir(state.id) / "previews")
+    exports = _directory_files(job_dir(state.id) / "exports")
+    destination = job_dir(state.id) / f"{_safe_stem(project_summary(state).name)}.planline"
+    path = write_project_package(
+        destination,
+        manifest,
+        source_content,
+        previews=previews,
+        exports=exports,
+    )
+    save_state(state)
+    return path
+
+
+def _directory_files(directory: Path) -> dict[str, Path]:
+    if not directory.is_dir():
+        return {}
+    return {
+        path.relative_to(directory).as_posix(): path
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+
+
+def _write_imported_files(directory: Path, files: dict[str, bytes]) -> None:
+    for name, content in files.items():
+        destination = directory / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)

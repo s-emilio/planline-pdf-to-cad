@@ -34,6 +34,15 @@ class ScaleCandidate(BaseModel):
     rect: RectModel | None = None
 
 
+class CalibrationRecord(BaseModel):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    distance: float = Field(gt=0)
+    units: Literal["in", "ft", "mm", "cm", "m"]
+
+
 class PlanRegion(BaseModel):
     id: str
     page_index: int
@@ -46,6 +55,7 @@ class PlanRegion(BaseModel):
     units: Literal["in", "mm"] = "in"
     units_per_point: float | None = None
     scale_label: str | None = None
+    calibration: CalibrationRecord | None = None
     remove_text: bool = False
     orthogonal_only: bool = False
     angle_tolerance: float = Field(default=3.0, ge=0, le=15)
@@ -69,7 +79,11 @@ class PageInfo(BaseModel):
 class JobState(BaseModel):
     id: str
     filename: str
+    project_name: str | None = None
     created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+    archived: bool = False
+    source_sha256: str | None = None
     status: Literal["analyzing", "ready", "exporting", "complete", "error"] = "analyzing"
     pages: list[PageInfo] = Field(default_factory=list)
     plans: list[PlanRegion] = Field(default_factory=list)
@@ -117,3 +131,24 @@ class CalibrationRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     format: Literal["all", "svg", "cad", "blend"] = "all"
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    archived: bool | None = None
+
+
+class ProjectDuplicateRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ProjectSummary(BaseModel):
+    id: str
+    name: str
+    filename: str
+    created_at: str
+    updated_at: str
+    archived: bool
+    page_count: int
+    plan_count: int
+    status: str

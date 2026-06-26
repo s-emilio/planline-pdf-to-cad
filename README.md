@@ -56,6 +56,11 @@ On any supported platform:
 
 Open <http://127.0.0.1:8765>.
 
+The opening screen is a local project library. Use the large PDF drop zone to
+create a persistent project, optionally name it before upload, import a
+portable `.planline` package from the recent-projects panel, or reopen an
+existing local project.
+
 Useful options:
 
 ```bash
@@ -99,7 +104,8 @@ found. Each Blender export contains:
 - a `PDF_Source_Plane` sized to the full calibrated crop;
 - the rendered source PNG packed into the Blender file;
 - the source plane 2 mm beneath the edge mesh to prevent z-fighting;
-- a visible 180-degree X-axis rotation on the source plane;
+- a baked 180-degree X-axis correction on both the edge mesh and source plane,
+  leaving clean zero object rotations;
 - an automatically calculated translation that aligns the full crop with
   Blender's SVG linework center.
 
@@ -174,6 +180,53 @@ flattened into clipped editable line segments. Mask coordinates are translated
 through the PDF page rotation before clipping, so masks follow the visible
 sheet even when the source PDF uses a rotated page box.
 
+The drawing toolbar provides plan-wide **Undo** and **Redo** controls. Each crop
+move or resize and each mask add, move, resize, removal, or clear action is one
+history step. Standard `Command/Ctrl+Z`, `Command/Ctrl+Shift+Z`, and `Ctrl+Y`
+shortcuts are supported.
+
+## Planline project format
+
+The project foundation defines a portable `.planline` file as a versioned ZIP
+container:
+
+```text
+Ranch Renovation.planline
+├── manifest.json
+├── source.pdf
+├── previews/
+└── exports/
+```
+
+Manifest version 1 records project and source metadata, the source PDF SHA-256
+checksum, page geometry and detected scales, plan crops, calibration points,
+scale and cleanup settings, exclusion masks, export preferences, and a reserved
+markup collection. Project loading rejects unsafe archive paths, unknown
+manifest fields, unsupported future versions, invalid geometry, and source PDF
+checksum or size mismatches. A version-0 migration establishes the upgrade path
+for older project files.
+
+New uploads are now stored as persistent local projects under
+`~/Planline Projects/<project-id>/` by default. Set `PLANLINE_PROJECTS_DIR` to
+override that location. Each directory contains `project.json`, `source.pdf`,
+and durable `previews/` and `exports/` folders. Closing a project in the browser
+does not delete it, and its `?job=<project-id>` URL can be reopened after the
+server restarts.
+
+Project edits autosave to the local project directory. The workspace shows a
+small save-status indicator while edits are being written locally. Choosing
+**Export Project File** creates a fresh portable `.planline` package; ordinary
+drawing exports continue to use the existing SVG/CAD/Blender workflow.
+
+The project API supports creating, listing, opening, renaming, archiving,
+duplicating, deleting, and downloading a portable `.planline` package. Existing
+`/api/jobs/...` routes remain available as compatibility aliases for the current
+editing and drawing-export UI.
+
+The opening screen lists recent local projects and provides actions to open,
+rename, duplicate, archive, or delete them. It can create a project from a PDF
+or import a validated `.planline` package as a new persistent local project.
+
 ## Limitations
 
 - PDF line types and fonts are approximated when no direct CAD equivalent
@@ -191,9 +244,10 @@ sheet even when the source PDF uses a rotated page box.
 ## Privacy
 
 The default server listens only on `127.0.0.1`. Uploaded PDFs and generated
-files stay on the machine running Planline and are stored in its temporary
-directory until the job is deleted or the operating system clears temporary
-files.
+files stay on the machine running Planline. Project definitions, source PDFs,
+previews, and exports are stored in `~/Planline Projects/` by default, or in
+`PLANLINE_PROJECTS_DIR` when that environment variable is set. Use the project
+library delete action to remove a project and its files.
 
 ## License
 

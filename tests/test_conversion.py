@@ -303,7 +303,8 @@ def test_blend_export_packages_scaled_edge_mesh_metadata(
             "source_image_packed": True,
             "source_plane_alignment_x_m": 0.1,
             "source_plane_alignment_y_m": 0,
-            "source_plane_rotation_x_degrees": 180,
+            "source_plane_rotation_x_degrees": 0,
+            "source_plane_x_rotation_applied_degrees": 180,
         }
 
     monkeypatch.setattr(jobs, "convert_svg_to_blend", fake_blender)
@@ -330,7 +331,11 @@ def test_blend_export_packages_scaled_edge_mesh_metadata(
         assert plan_report["blend_mesh"]["x_rotation_applied_degrees"] == 180
         assert plan_report["blend_mesh"]["source_plane"] == "PDF_Source_Plane"
         assert plan_report["blend_mesh"]["source_image_packed"] is True
-        assert plan_report["blend_mesh"]["source_plane_rotation_x_degrees"] == 180
+        assert plan_report["blend_mesh"]["source_plane_rotation_x_degrees"] == 0
+        assert (
+            plan_report["blend_mesh"]["source_plane_x_rotation_applied_degrees"]
+            == 180
+        )
 
 
 def test_changing_units_preserves_physical_scale(vector_pdf, tmp_path, monkeypatch):

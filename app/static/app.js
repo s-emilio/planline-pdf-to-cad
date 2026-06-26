@@ -17,6 +17,9 @@ const state = {
   calibrationMode: false,
   maskMode: false,
   maskDraft: null,
+  selectedMaskIndex: null,
+  editUndoStack: [],
+  editRedoStack: [],
   workflowPlanId: null,
   panMode: false,
   spaceDown: false,
@@ -66,6 +69,63 @@ async function checkHealth() {
     }
   } catch (_) {
     $("#odaStatus").textContent = "Local service unavailable";
+  }
+}
+
+function formatProjectDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function renderRecentProjects(projects) {
+  const list = $("#recentProjectList");
+  if (!projects.length) {
+    list.innerHTML = `
+      <p class="recent-empty">
+        No projects yet. Start with a PDF or import a .planline file.
+      </p>
+    `;
+    return;
+  }
+  list.innerHTML = projects.map((project) => `
+    <article class="project-card">
+      <button class="project-card-main" type="button"
+        data-project-action="open" data-project-id="${escapeHtml(project.id)}">
+        <strong>${escapeHtml(project.name)}</strong>
+        <small>${project.page_count} ${project.page_count === 1 ? "page" : "pages"}
+          · ${project.plan_count} ${project.plan_count === 1 ? "plan" : "plans"}
+          · ${escapeHtml(formatProjectDate(project.updated_at))}</small>
+      </button>
+      <div class="project-card-actions" aria-label="${escapeHtml(project.name)} actions">
+        <button type="button" data-project-action="rename"
+          data-project-id="${escapeHtml(project.id)}"
+          data-project-name="${escapeHtml(project.name)}">Rename</button>
+        <button type="button" data-project-action="duplicate"
+          data-project-id="${escapeHtml(project.id)}">Duplicate</button>
+        <button type="button" data-project-action="archive"
+          data-project-id="${escapeHtml(project.id)}">Archive</button>
+        <button type="button" class="danger" data-project-action="delete"
+          data-project-id="${escapeHtml(project.id)}"
+          data-project-name="${escapeHtml(project.name)}">Delete</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+async function loadProjects() {
+  try {
+    renderRecentProjects(await api("/api/projects"));
+  } catch (error) {
+    $("#recentProjectList").innerHTML = `
+      <p class="recent-empty">${escapeHtml(error.message)}</p>
+    `;
   }
 }
 
@@ -206,10 +266,10 @@ function drawCanvas() {
   const plan = selectedPlan();
   if (plan) {
     (plan.exclude_regions || []).forEach((mask, index) => {
-      drawMask(mask, `Exclude ${index + 1}`);
+      drawMask(mask, `Exclude ${index + 1}`, index === state.selectedMaskIndex);
     });
   }
-  if (state.maskDraft) drawMask(state.maskDraft, "New exclusion");
+  if (state.maskDraft) drawMask(state.maskDraft, "New exclusion", true);
 
   if (state.calibration.length) {
     ctx.strokeStyle = "#d43f67";
@@ -231,30 +291,139 @@ function drawCanvas() {
   }
 }
 
-function drawMask(mask, label) {
-  const normalized = {
-    x0: Math.min(mask.x0, mask.x1),
-    y0: Math.min(mask.y0, mask.y1),
-    x1: Math.max(mask.x0, mask.x1),
-    y1: Math.max(mask.y0, mask.y1),
+function normalizedRect(rect) {
+  return {
+    x0: Math.min(rect.x0, rect.x1),
+    y0: Math.min(rect.y0, rect.y1),
+    x1: Math.max(rect.x0, rect.x1),
+    y1: Math.max(rect.y0, rect.y1),
   };
+}
+
+function drawMask(mask, label, selected = false) {
+  const normalized = normalizedRect(mask);
   const a = pdfToCanvas(normalized.x0, normalized.y0);
   const b = pdfToCanvas(normalized.x1, normalized.y1);
-  ctx.fillStyle = "rgba(184, 50, 57, .18)";
-  ctx.strokeStyle = "#b83239";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
+  ctx.fillStyle = selected ? "rgba(242, 140, 40, .20)" : "rgba(184, 50, 57, .18)";
+  ctx.strokeStyle = selected ? "#e87516" : "#b83239";
+  ctx.lineWidth = selected ? 3 : 2;
+  ctx.setLineDash(selected ? [] : [6, 4]);
   ctx.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
   ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
   ctx.setLineDash([]);
-  ctx.fillStyle = "#b83239";
+  ctx.fillStyle = selected ? "#b85d00" : "#b83239";
   ctx.font = "700 10px system-ui";
   ctx.fillText(label, a.x + 5, a.y + 14);
+  if (selected) drawRectHandles(a, b, "#e87516");
+}
+
+function cloneMasks(masks) {
+  return (masks || []).map((mask) => ({ ...mask }));
+}
+
+function geometrySnapshot(plan = selectedPlan()) {
+  if (!plan) return null;
+  return {
+    crop: { ...plan.crop },
+    exclude_regions: cloneMasks(plan.exclude_regions),
+  };
+}
+
+function updateEditHistoryButtons() {
+  const planId = selectedPlan()?.id;
+  const hasUndo = state.editUndoStack.some((entry) => entry.planId === planId);
+  const hasRedo = state.editRedoStack.some((entry) => entry.planId === planId);
+  $("#undoEditButton").disabled = !hasUndo;
+  $("#redoEditButton").disabled = !hasRedo;
+}
+
+function pushEditHistory(before, after, selectedIndex = state.selectedMaskIndex) {
+  const plan = selectedPlan();
+  if (!plan || !before || !after) return;
+  state.editUndoStack.push({
+    planId: plan.id,
+    before: {
+      crop: { ...before.crop },
+      exclude_regions: cloneMasks(before.exclude_regions),
+    },
+    after: {
+      crop: { ...after.crop },
+      exclude_regions: cloneMasks(after.exclude_regions),
+    },
+    selectedIndex,
+  });
+  const planEntries = state.editUndoStack.filter((entry) => entry.planId === plan.id);
+  if (planEntries.length > 50) {
+    const oldestPlanEntry = state.editUndoStack.findIndex(
+      (entry) => entry.planId === plan.id
+    );
+    state.editUndoStack.splice(oldestPlanEntry, 1);
+  }
+  state.editRedoStack = state.editRedoStack.filter((entry) => entry.planId !== plan.id);
+  updateEditHistoryButtons();
+}
+
+function popPlanHistory(stack, planId) {
+  for (let index = stack.length - 1; index >= 0; index -= 1) {
+    if (stack[index].planId === planId) return stack.splice(index, 1)[0];
+  }
+  return null;
+}
+
+async function applyEditHistory(entry, direction) {
+  const plan = selectedPlan();
+  if (!plan || !entry) return false;
+  const geometry = direction === "undo" ? entry.before : entry.after;
+  try {
+    await savePlan({
+      crop: { ...geometry.crop },
+      exclude_regions: cloneMasks(geometry.exclude_regions),
+    });
+    state.selectedMaskIndex = entry.selectedIndex === null
+      || geometry.exclude_regions.length === 0
+      ? null
+      : Math.min(entry.selectedIndex, geometry.exclude_regions.length - 1);
+    renderInspector();
+    drawCanvas();
+    return true;
+  } catch (error) {
+    toast(error.message, true);
+    return false;
+  }
+}
+
+async function undoPlanEdit() {
+  const plan = selectedPlan();
+  if (!plan) return;
+  const entry = popPlanHistory(state.editUndoStack, plan.id);
+  if (!entry) return;
+  if (await applyEditHistory(entry, "undo")) {
+    state.editRedoStack.push(entry);
+    toast("Plan edit undone.");
+  } else state.editUndoStack.push(entry);
+  updateEditHistoryButtons();
+}
+
+async function redoPlanEdit() {
+  const plan = selectedPlan();
+  if (!plan) return;
+  const entry = popPlanHistory(state.editRedoStack, plan.id);
+  if (!entry) return;
+  if (await applyEditHistory(entry, "redo")) {
+    state.editUndoStack.push(entry);
+    toast("Plan edit redone.");
+  } else state.editRedoStack.push(entry);
+  updateEditHistoryButtons();
 }
 
 function drawHandles(a, b) {
+  drawRectHandles(a, b, "#1d6b4b");
+}
+
+function drawRectHandles(a, b, color) {
   ctx.fillStyle = "#fff";
-  ctx.strokeStyle = "#1d6b4b";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
   const points = [
     [a.x, a.y], [b.x, a.y], [b.x, b.y], [a.x, b.y],
   ];
@@ -264,14 +433,13 @@ function drawHandles(a, b) {
   });
 }
 
-function cropHit(event) {
-  const plan = selectedPlan();
-  if (!plan) return null;
+function rectHit(event, source) {
   const rect = canvas.getBoundingClientRect();
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
-  const a = pdfToCanvas(plan.crop.x0, plan.crop.y0);
-  const b = pdfToCanvas(plan.crop.x1, plan.crop.y1);
+  const normalized = normalizedRect(source);
+  const a = pdfToCanvas(normalized.x0, normalized.y0);
+  const b = pdfToCanvas(normalized.x1, normalized.y1);
   const threshold = 10;
   const near = (value, target) => Math.abs(value - target) <= threshold;
   if (near(x, a.x) && near(y, a.y)) return "nw";
@@ -280,6 +448,19 @@ function cropHit(event) {
   if (near(x, a.x) && near(y, b.y)) return "sw";
   if (x >= a.x && x <= b.x && y >= a.y && y <= b.y) return "move";
   return null;
+}
+
+function cropHit(event) {
+  const plan = selectedPlan();
+  if (!plan) return null;
+  return rectHit(event, plan.crop);
+}
+
+function selectedMaskHit(event) {
+  const masks = selectedPlan()?.exclude_regions || [];
+  const index = state.selectedMaskIndex;
+  if (index === null || !masks[index]) return null;
+  return rectHit(event, masks[index]);
 }
 
 canvas.addEventListener("pointerdown", (event) => {
@@ -313,6 +494,7 @@ canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   if (state.maskMode && selectedPlan()) {
+    state.selectedMaskIndex = null;
     state.maskDraft = {
       x0: pdfPoint.x,
       y0: pdfPoint.y,
@@ -322,10 +504,26 @@ canvas.addEventListener("pointerdown", (event) => {
     state.dragging = {
       mode: "exclude-mask",
       start: pdfPoint,
+      beforeGeometry: geometrySnapshot(),
     };
     canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
     drawCanvas();
+    return;
+  }
+
+  const maskHit = selectedMaskHit(event);
+  if (maskHit) {
+    const index = state.selectedMaskIndex;
+    state.dragging = {
+      mode: `mask-${maskHit}`,
+      start: pdfPoint,
+      index,
+      mask: normalizedRect(selectedPlan().exclude_regions[index]),
+      beforeGeometry: geometrySnapshot(),
+    };
+    canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
     return;
   }
 
@@ -347,6 +545,7 @@ canvas.addEventListener("pointerdown", (event) => {
       mode: hit,
       start: pdfPoint,
       crop: { ...selectedPlan().crop },
+      beforeGeometry: geometrySnapshot(),
     };
     canvas.setPointerCapture(event.pointerId);
   }
@@ -370,6 +569,21 @@ canvas.addEventListener("pointermove", (event) => {
   }
   const dx = point.x - state.dragging.start.x;
   const dy = point.y - state.dragging.start.y;
+  if (state.dragging.mode.startsWith("mask-")) {
+    const action = state.dragging.mode.slice(5);
+    const mask = { ...state.dragging.mask };
+    if (action === "move") {
+      mask.x0 += dx; mask.x1 += dx; mask.y0 += dy; mask.y1 += dy;
+    } else {
+      if (action.includes("w")) mask.x0 += dx;
+      if (action.includes("e")) mask.x1 += dx;
+      if (action.includes("n")) mask.y0 += dy;
+      if (action.includes("s")) mask.y1 += dy;
+    }
+    selectedPlan().exclude_regions[state.dragging.index] = normalizedRect(mask);
+    drawCanvas();
+    return;
+  }
   const crop = { ...state.dragging.crop };
   if (state.dragging.mode === "move") {
     crop.x0 += dx; crop.x1 += dx; crop.y0 += dy; crop.y1 += dy;
@@ -392,6 +606,7 @@ canvas.addEventListener("pointerup", async (event) => {
     return;
   }
   if (state.dragging.mode === "exclude-mask") {
+    const beforeGeometry = state.dragging.beforeGeometry;
     state.dragging = null;
     const draft = state.maskDraft;
     state.maskDraft = null;
@@ -408,9 +623,14 @@ canvas.addEventListener("pointerup", async (event) => {
       return;
     }
     try {
+      const newIndex = (selectedPlan().exclude_regions || []).length;
       await savePlan({
         exclude_regions: [...(selectedPlan().exclude_regions || []), mask],
       });
+      pushEditHistory(beforeGeometry, geometrySnapshot(), newIndex);
+      state.selectedMaskIndex = newIndex;
+      renderInspector();
+      drawCanvas();
       $("#canvasHint").textContent = "Exclusion mask saved. Draw another or export the plan.";
       toast("Exclusion mask saved.");
     } catch (error) {
@@ -419,9 +639,37 @@ canvas.addEventListener("pointerup", async (event) => {
     }
     return;
   }
+  if (state.dragging.mode.startsWith("mask-")) {
+    const index = state.dragging.index;
+    const beforeGeometry = state.dragging.beforeGeometry;
+    const masks = [...(selectedPlan().exclude_regions || [])];
+    const edited = normalizedRect(masks[index]);
+    state.dragging = null;
+    if (edited.x1 - edited.x0 < 2 || edited.y1 - edited.y0 < 2) {
+      toast("Exclusion masks must be at least 2 PDF points wide and high.", true);
+      await refreshJob();
+      return;
+    }
+    masks[index] = edited;
+    try {
+      await savePlan({ exclude_regions: masks });
+      pushEditHistory(beforeGeometry, geometrySnapshot(), index);
+      state.selectedMaskIndex = index;
+      renderInspector();
+      drawCanvas();
+      $("#canvasHint").textContent = "Exclusion mask updated. Drag it again to keep editing.";
+      toast("Exclusion mask updated.");
+    } catch (error) {
+      toast(error.message, true);
+      await refreshJob();
+    }
+    return;
+  }
+  const beforeGeometry = state.dragging.beforeGeometry;
   state.dragging = null;
   try {
     await savePlan({ crop: selectedPlan().crop });
+    pushEditHistory(beforeGeometry, geometrySnapshot(), null);
   } catch (error) {
     toast(error.message, true);
     await refreshJob();
@@ -429,6 +677,12 @@ canvas.addEventListener("pointerup", async (event) => {
 });
 
 canvas.addEventListener("pointercancel", () => {
+  if (state.dragging?.beforeGeometry && selectedPlan()) {
+    selectedPlan().crop = { ...state.dragging.beforeGeometry.crop };
+    selectedPlan().exclude_regions = cloneMasks(
+      state.dragging.beforeGeometry.exclude_regions
+    );
+  }
   state.dragging = null;
   state.maskDraft = null;
   state.maskMode = false;
@@ -504,12 +758,15 @@ function renderInspector() {
   const masks = plan.exclude_regions || [];
   $("#maskCount").textContent = `${masks.length} ${masks.length === 1 ? "mask" : "masks"}`;
   $("#maskList").innerHTML = masks.map((mask, index) => `
-    <div class="mask-item">
+    <div class="mask-item ${index === state.selectedMaskIndex ? "selected" : ""}"
+      data-select-mask="${index}" role="button" tabindex="0"
+      aria-label="Edit exclusion mask ${index + 1}">
       <span>Exclude ${index + 1}</span>
       <small>${Math.round(mask.x1 - mask.x0)} × ${Math.round(mask.y1 - mask.y0)} PDF pt</small>
-      <button type="button" data-mask-index="${index}">Remove</button>
+      <button type="button" data-remove-mask="${index}">Remove</button>
     </div>
   `).join("");
+  updateEditHistoryButtons();
   $("#confirmScaleButton").textContent = plan.scale_confirmed ? "Scale confirmed ✓" : "Confirm scale";
   $("#confirmScaleButton").disabled = !plan.units_per_point;
   const measurementsComplete = Boolean(plan.scale_confirmed && plan.units_per_point);
@@ -615,6 +872,7 @@ async function selectPage(index) {
   state.calibrationMode = false;
   state.maskMode = false;
   state.maskDraft = null;
+  state.selectedMaskIndex = null;
   state.view.initialized = false;
   const page = currentPage();
   $("#pageLabel").textContent = `Page ${index + 1}`;
@@ -632,6 +890,7 @@ function selectPlan(planId) {
   state.calibrationMode = false;
   state.maskMode = false;
   state.maskDraft = null;
+  state.selectedMaskIndex = null;
   state.workflowPlanId = null;
   renderInspector();
   drawCanvas();
@@ -642,10 +901,20 @@ async function refreshJob() {
   if (!state.job.plans.some((plan) => plan.id === state.planId)) {
     state.planId = pagePlans()[0]?.id || null;
   }
+  const maskCount = selectedPlan()?.exclude_regions?.length || 0;
+  if (state.selectedMaskIndex !== null && state.selectedMaskIndex >= maskCount) {
+    state.selectedMaskIndex = null;
+  }
   renderPages();
   renderInspector();
   renderExportState();
   drawCanvas();
+}
+
+function setProjectSaveStatus(message, stateName = "") {
+  const status = $("#projectSaveStatus");
+  status.textContent = message;
+  status.className = `project-save-status ${stateName}`.trim();
 }
 
 async function savePlan(overrides = {}) {
@@ -657,11 +926,19 @@ async function savePlan(overrides = {}) {
     units: $("#units").value,
     ...overrides,
   };
-  const updated = await api(`/api/jobs/${state.job.id}/plans/${plan.id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  setProjectSaveStatus("Saving…", "saving");
+  let updated;
+  try {
+    updated = await api(`/api/jobs/${state.job.id}/plans/${plan.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    setProjectSaveStatus("Saved locally");
+  } catch (error) {
+    setProjectSaveStatus("Save failed", "error");
+    throw error;
+  }
   const index = state.job.plans.findIndex((item) => item.id === plan.id);
   state.job.plans[index] = updated;
   state.planId = updated.id;
@@ -678,12 +955,16 @@ async function handleUpload(file) {
   $("#dropZone strong").textContent = "Analyzing vector geometry…";
   const form = new FormData();
   form.append("file", file);
+  const projectName = $("#newProjectName").value.trim();
+  if (projectName) form.append("name", projectName);
   try {
-    state.job = await api("/api/jobs", { method: "POST", body: form });
+    state.job = await api("/api/projects", { method: "POST", body: form });
     if (state.job.status === "error") throw new Error(state.job.error);
     $("#uploadView").classList.add("hidden");
     $("#workspaceView").classList.remove("hidden");
-    $("#jobName").textContent = state.job.filename;
+    $("#jobName").textContent = state.job.project_name || state.job.filename;
+    $("#exportProjectButton").href = `/api/projects/${state.job.id}/package`;
+    window.history.replaceState(null, "", `/?job=${state.job.id}`);
     state.pageIndex = state.job.pages.find((page) => !page.raster_only)?.index || 0;
     state.planId = state.job.plans.find((plan) => plan.page_index === state.pageIndex)?.id || null;
     renderExportState();
@@ -698,24 +979,54 @@ async function handleUpload(file) {
   }
 }
 
+async function handleProjectImport(file) {
+  if (!file) return;
+  $("#uploadError").classList.add("hidden");
+  $("#uploadError").textContent = "";
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    $("#projectFileInput").disabled = true;
+    state.job = await api("/api/projects/import", { method: "POST", body: form });
+    window.location.href = `/?job=${state.job.id}`;
+  } catch (error) {
+    $("#uploadError").textContent = error.message;
+    $("#uploadError").classList.remove("hidden");
+    toast(error.message, true);
+  } finally {
+    $("#projectFileInput").disabled = false;
+    $("#projectFileInput").value = "";
+  }
+}
+
 async function loadExistingJob() {
   const jobId = new URLSearchParams(window.location.search).get("job");
-  if (!jobId) return;
+  if (!jobId) {
+    await loadProjects();
+    return;
+  }
   try {
     state.job = await api(`/api/jobs/${jobId}`);
     $("#uploadView").classList.add("hidden");
     $("#workspaceView").classList.remove("hidden");
-    $("#jobName").textContent = state.job.filename;
+    $("#jobName").textContent = state.job.project_name || state.job.filename;
+    $("#exportProjectButton").href = `/api/projects/${state.job.id}/package`;
     state.pageIndex = state.job.pages.find((page) => !page.raster_only)?.index || 0;
     state.planId = state.job.plans.find((plan) => plan.page_index === state.pageIndex)?.id || null;
     renderExportState();
     await selectPage(state.pageIndex);
   } catch (error) {
     toast(error.message, true);
+    window.history.replaceState(null, "", "/");
+    await loadProjects();
   }
 }
 
 $("#fileInput").addEventListener("change", (event) => handleUpload(event.target.files[0]));
+$("#projectFileInput").addEventListener(
+  "change",
+  (event) => handleProjectImport(event.target.files[0]),
+);
 ["dragenter", "dragover"].forEach((name) => $("#dropZone").addEventListener(name, (event) => {
   event.preventDefault(); $("#dropZone").classList.add("dragging");
 }));
@@ -723,6 +1034,49 @@ $("#fileInput").addEventListener("change", (event) => handleUpload(event.target.
   event.preventDefault(); $("#dropZone").classList.remove("dragging");
 }));
 $("#dropZone").addEventListener("drop", (event) => handleUpload(event.dataTransfer.files[0]));
+$("#refreshProjectsButton").addEventListener("click", loadProjects);
+
+$("#recentProjectList").addEventListener("click", async (event) => {
+  const actionButton = event.target.closest("[data-project-action]");
+  if (!actionButton) return;
+  const projectId = actionButton.dataset.projectId;
+  const action = actionButton.dataset.projectAction;
+  if (action === "open") {
+    window.location.href = `/?job=${projectId}`;
+    return;
+  }
+  try {
+    if (action === "rename") {
+      const name = window.prompt("Rename project", actionButton.dataset.projectName || "");
+      if (name === null) return;
+      if (!name.trim()) throw new Error("Project name cannot be empty.");
+      await api(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      toast("Project renamed.");
+    } else if (action === "duplicate") {
+      await api(`/api/projects/${projectId}/duplicate`, { method: "POST" });
+      toast("Project duplicated.");
+    } else if (action === "archive") {
+      await api(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+      toast("Project archived.");
+    } else if (action === "delete") {
+      const name = actionButton.dataset.projectName || "this project";
+      if (!window.confirm(`Permanently delete “${name}”?`)) return;
+      await api(`/api/projects/${projectId}`, { method: "DELETE" });
+      toast("Project deleted.");
+    }
+    await loadProjects();
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
 
 $("#planForm").addEventListener("submit", (event) => event.preventDefault());
 
@@ -784,28 +1138,63 @@ $("#drawMaskButton").addEventListener("click", () => {
   state.calibrationMode = false;
   state.maskMode = true;
   state.maskDraft = null;
+  state.selectedMaskIndex = null;
   $("#canvasHint").textContent = "Drag a rectangle over anything that should be excluded from export.";
   toast("Drag an exclusion mask on the drawing.");
 });
 
 $("#clearMasksButton").addEventListener("click", async () => {
   if (!selectedPlan()?.exclude_regions?.length) return;
+  const beforeGeometry = geometrySnapshot();
   try {
     await savePlan({ exclude_regions: [] });
+    pushEditHistory(beforeGeometry, geometrySnapshot(), null);
+    state.selectedMaskIndex = null;
+    renderInspector();
+    drawCanvas();
     toast("All exclusion masks removed.");
   } catch (error) { toast(error.message, true); }
 });
 
+$("#undoEditButton").addEventListener("click", undoPlanEdit);
+$("#redoEditButton").addEventListener("click", redoPlanEdit);
+
 $("#maskList").addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-mask-index]");
-  if (!button) return;
-  const index = Number(button.dataset.maskIndex);
+  const remove = event.target.closest("[data-remove-mask]");
+  if (!remove) {
+    const item = event.target.closest("[data-select-mask]");
+    if (!item) return;
+    state.selectedMaskIndex = Number(item.dataset.selectMask);
+    state.maskMode = false;
+    state.maskDraft = null;
+    renderInspector();
+    drawCanvas();
+    $("#canvasHint").textContent = "Drag the selected mask or its corner handles to edit it.";
+    toast(`Exclude ${state.selectedMaskIndex + 1} selected for editing.`);
+    return;
+  }
+  event.stopPropagation();
+  const index = Number(remove.dataset.removeMask);
+  const beforeGeometry = geometrySnapshot();
   const masks = [...(selectedPlan().exclude_regions || [])];
   masks.splice(index, 1);
   try {
     await savePlan({ exclude_regions: masks });
+    pushEditHistory(beforeGeometry, geometrySnapshot(), null);
+    if (state.selectedMaskIndex === index) state.selectedMaskIndex = null;
+    else if (state.selectedMaskIndex > index) state.selectedMaskIndex -= 1;
+    renderInspector();
+    drawCanvas();
     toast("Exclusion mask removed.");
   } catch (error) { toast(error.message, true); }
+});
+
+$("#maskList").addEventListener("keydown", (event) => {
+  if (!["Enter", " "].includes(event.key)) return;
+  const item = event.target.closest("[data-select-mask]");
+  if (!item || event.target.closest("[data-remove-mask]")) return;
+  event.preventDefault();
+  item.click();
 });
 
 $("#pickPointsButton").addEventListener("click", () => {
@@ -813,6 +1202,7 @@ $("#pickPointsButton").addEventListener("click", () => {
   state.calibrationMode = true;
   state.maskMode = false;
   state.maskDraft = null;
+  state.selectedMaskIndex = null;
   $("#applyCalibrationButton").disabled = true;
   $("#canvasHint").textContent = "Scroll to zoom, use Hand or Space to pan, then click the two known points.";
   drawCanvas();
@@ -827,6 +1217,19 @@ $("#panButton").addEventListener("click", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  const editingField = ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName);
+  const command = event.metaKey || event.ctrlKey;
+  if (command && !editingField && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    if (event.shiftKey) redoPlanEdit();
+    else undoPlanEdit();
+    return;
+  }
+  if (command && !editingField && event.key.toLowerCase() === "y") {
+    event.preventDefault();
+    redoPlanEdit();
+    return;
+  }
   if (event.code !== "Space" || ["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)) return;
   state.spaceDown = true;
   updateZoomUI();
@@ -918,10 +1321,7 @@ $("#closeProgressButton").addEventListener("click", () => {
 });
 
 $("#newJobButton").addEventListener("click", async () => {
-  if (state.job) {
-    try { await api(`/api/jobs/${state.job.id}`, { method: "DELETE" }); } catch (_) {}
-  }
-  window.location.reload();
+  window.location.href = "/";
 });
 
 window.addEventListener("resize", sizeCanvas);

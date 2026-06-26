@@ -123,11 +123,16 @@ def _source_plane(
 
     plane.location = (offset_x_m, -offset_y_m, -0.002)
     plane.rotation_euler.x = math.radians(180)
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.context.view_layer.objects.active = plane
+    plane.select_set(True)
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
     plane["planline_source_png"] = image_path.name
     plane["planline_image_packed"] = True
     plane["planline_offset_below_edges_m"] = 0.002
     plane["planline_alignment_offset_x_m"] = offset_x_m
     plane["planline_alignment_offset_y_m"] = -offset_y_m
+    plane["planline_x_rotation_applied_degrees"] = 180
     return plane
 
 
@@ -217,7 +222,8 @@ def main() -> None:
         "source_plane_offset_m": 0.002,
         "source_plane_alignment_x_m": plane_offset_x_m,
         "source_plane_alignment_y_m": -plane_offset_y_m,
-        "source_plane_rotation_x_degrees": 180,
+        "source_plane_rotation_x_degrees": 0,
+        "source_plane_x_rotation_applied_degrees": 180,
     }
     print("PLANLINE_BLEND_STATS:" + json.dumps(stats, sort_keys=True))
 
